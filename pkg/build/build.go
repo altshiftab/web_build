@@ -49,6 +49,7 @@ const (
 
 	crossOriginAnonymous     = "anonymous"
 	crossOriginAttributeName = "crossorigin"
+	integrityAttributeName   = "integrity"
 )
 
 var (
@@ -102,9 +103,15 @@ type page struct {
 	chunkName    string
 }
 
+type metafileImport struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
 type metafileOutput struct {
-	EntryPoint string `json:"entryPoint,omitzero"`
-	CssBundle  string `json:"cssBundle,omitzero"`
+	EntryPoint string            `json:"entryPoint,omitzero"`
+	CssBundle  string            `json:"cssBundle,omitzero"`
+	Imports    []*metafileImport `json:"imports,omitzero"`
 }
 
 type metafile struct {
@@ -433,6 +440,60 @@ func (b *builder) preloadTags() []*html.Node {
 	return tags
 }
 
+// staticImportClosure returns the js outputs statically imported by the given
+// entry output, directly or transitively, in sorted order. Dynamic imports are
+// excluded: those chunks load lazily and get their integrity from the import map.
+func staticImportClosure(entryPath string, parsedMetafile *metafile) []string {
+	visited := map[string]struct{}{entryPath: {}}
+	queue := []string{entryPath}
+	var closure []string
+
+	for len(queue) != 0 {
+		currentPath := queue[0]
+		queue = queue[1:]
+
+		output := parsedMetafile.Outputs[currentPath]
+		if output == nil {
+			continue
+		}
+		for _, currentImport := range output.Imports {
+			if currentImport.Kind != "import-statement" || !strings.HasSuffix(currentImport.Path, ".js") {
+				continue
+			}
+			if _, ok := visited[currentImport.Path]; ok {
+				continue
+			}
+			visited[currentImport.Path] = struct{}{}
+			closure = append(closure, currentImport.Path)
+			queue = append(queue, currentImport.Path)
+		}
+	}
+
+	sort.Strings(closure)
+	return closure
+}
+
+// importMapTag builds an import map script whose integrity section covers every
+// emitted module chunk, so lazily loaded chunks are integrity-checked without
+// being preloaded.
+func (b *builder) importMapTag() (*html.Node, error) {
+	integrity := make(map[string]string)
+	for outputPath, contents := range b.outputs {
+		if strings.HasPrefix(outputPath, scriptsDirectoryName+"/") && strings.HasSuffix(outputPath, ".js") {
+			integrity[b.publicPath+outputPath] = integrityAttribute(contents)
+		}
+	}
+
+	importMap, err := json.Marshal(map[string]map[string]string{"integrity": integrity})
+	if err != nil {
+		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("json marshal import map: %w", err))
+	}
+
+	scriptElement := makeElement("script", html.Attribute{Key: "type", Val: "importmap"})
+	scriptElement.AppendChild(&html.Node{Type: html.TextNode, Data: string(importMap)})
+	return scriptElement, nil
+}
+
 // pageChunkFiles returns the js and css output paths of the entry named by the
 // page's chunk name.
 func (b *builder) pageChunkFiles(chunkName string, parsedMetafile *metafile) (string, string, error) {
@@ -475,26 +536,53 @@ func (b *builder) processPage(currentPage *page, parsedMetafile *metafile) error
 	}
 
 	var injectedTags []*html.Node
+
+	// The import map must precede any module loading.
+	if b.configuration.Splitting {
+		importMapElement, err := b.importMapTag()
+		if err != nil {
+			return fmt.Errorf("import map tag: %w", err)
+		}
+		injectedTags = append(injectedTags, importMapElement)
+	}
+
 	injectedTags = append(injectedTags, b.preloadTags()...)
+
+	if b.configuration.Splitting {
+		// Preloading the static import closure avoids a sequential fetch
+		// waterfall; lazily imported chunks are deliberately not preloaded.
+		for _, chunkPath := range staticImportClosure(scriptPath, parsedMetafile) {
+			injectedTags = append(injectedTags, makeElement(
+				"link",
+				html.Attribute{Key: "rel", Val: "modulepreload"},
+				html.Attribute{Key: "href", Val: b.publicPath + chunkPath},
+				html.Attribute{Key: integrityAttributeName, Val: integrityAttribute(b.outputs[chunkPath])},
+				html.Attribute{Key: crossOriginAttributeName, Val: crossOriginAnonymous},
+			))
+		}
+	}
 
 	if cssPath != "" {
 		injectedTags = append(injectedTags, makeElement(
 			"link",
 			html.Attribute{Key: "rel", Val: "stylesheet"},
 			html.Attribute{Key: "href", Val: b.publicPath + cssPath},
-			html.Attribute{Key: "integrity", Val: integrityAttribute(b.outputs[cssPath])},
+			html.Attribute{Key: integrityAttributeName, Val: integrityAttribute(b.outputs[cssPath])},
 			html.Attribute{Key: crossOriginAttributeName, Val: crossOriginAnonymous},
 		))
 	}
 
-	scriptElement := makeElement(
-		"script",
-		html.Attribute{Key: "defer", Val: ""},
-		html.Attribute{Key: "src", Val: b.publicPath + scriptPath},
-		html.Attribute{Key: "integrity", Val: integrityAttribute(b.outputs[scriptPath])},
-		html.Attribute{Key: crossOriginAttributeName, Val: crossOriginAnonymous},
-	)
-	injectedTags = append(injectedTags, scriptElement)
+	scriptAttributes := []html.Attribute{
+		{Key: "defer", Val: ""},
+		{Key: "src", Val: b.publicPath + scriptPath},
+		{Key: integrityAttributeName, Val: integrityAttribute(b.outputs[scriptPath])},
+		{Key: crossOriginAttributeName, Val: crossOriginAnonymous},
+	}
+	if b.configuration.Splitting {
+		// Module scripts defer by default.
+		scriptAttributes[0] = html.Attribute{Key: "type", Val: "module"}
+	}
+	injectedTags = append(injectedTags, makeElement("script", scriptAttributes...))
 
 	for _, tag := range injectedTags {
 		headElement.AppendChild(tag)
@@ -550,14 +638,21 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 		return nil, fmt.Errorf("discover pages: %w", err)
 	}
 
+	format := api.FormatIIFE
+	if configuration.Splitting {
+		format = api.FormatESModule
+	}
+
 	buildResult := api.Build(api.BuildOptions{
 		EntryPointsAdvanced: entryPoints,
 		Bundle:              true,
 		Outdir:              outputDirectory,
 		EntryNames:          "[dir]/[name]-[hash]",
+		ChunkNames:          scriptsDirectoryName + "/chunk-[hash]",
 		AssetNames:          temporaryAssetsPrefix + "[name]-[hash]",
 		PublicPath:          publicPath,
-		Format:              api.FormatIIFE,
+		Format:              format,
+		Splitting:           configuration.Splitting,
 		Platform:            api.PlatformBrowser,
 		Target:              api.ESNext,
 		MinifyWhitespace:    true,
@@ -634,6 +729,11 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 		}
 		if output.CssBundle != "" {
 			if output.CssBundle, err = makeOutputRelative(output.CssBundle); err != nil {
+				return nil, fmt.Errorf("make output relative: %w", err)
+			}
+		}
+		for _, outputImport := range output.Imports {
+			if outputImport.Path, err = makeOutputRelative(outputImport.Path); err != nil {
 				return nil, fmt.Errorf("make output relative: %w", err)
 			}
 		}

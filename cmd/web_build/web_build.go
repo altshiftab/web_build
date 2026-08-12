@@ -55,6 +55,9 @@ func main() {
 	var preloadFontsPattern string
 	flag.StringVar(&preloadFontsPattern, "preload-fonts", "", "A regular expression matching font assets to preload.")
 
+	var splitting bool
+	flag.BoolVar(&splitting, "splitting", false, "Emit ES modules with code splitting: dynamic imports become lazy chunks with import map integrity.")
+
 	extraEntries := make(map[string]string)
 	flag.Func("entry", "An extra entry point as name=path. Can be repeated.", func(value string) error {
 		name, path, err := parseEntry(value)
@@ -88,6 +91,7 @@ func main() {
 			PublicPath:      publicPath,
 			PreloadFonts:    preloadFonts,
 			ExtraEntries:    extraEntries,
+			Splitting:       splitting,
 		},
 	)
 	if err != nil {

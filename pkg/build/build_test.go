@@ -3,6 +3,7 @@ package build
 import (
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,12 +34,18 @@ func writeFixture(t *testing.T, root string) {
 			},
 			"\n",
 		),
+		"src/scripts/modules/shared.ts":     `export const sharedValue = "shared-code-marker";`,
+		"src/scripts/other.ts":              `import {sharedValue} from "./modules/shared";` + "\n" + `console.log("other-entry", sharedValue);`,
+		"src/scripts/modules/lazy_extra.ts": `export const lazyValue = "lazy-extra-marker";`,
 		"src/scripts/index.ts": strings.Join(
 			[]string{
 				"/**",
 				" * @license Fixture-JS-License",
 				" */",
 				`import "../styles/main.css";`,
+				`import {sharedValue} from "./modules/shared";`,
+				"",
+				`void import("./modules/lazy_extra").then(module => console.log(sharedValue, module.lazyValue));`,
 				"",
 				"type TemplateTag = (strings: TemplateStringsArray, ...values: unknown[]) => string;",
 				"",
@@ -276,6 +283,140 @@ func TestBuild(t *testing.T) {
 
 		if strings.Contains(page, "\n") {
 			t.Error("expected minified html output")
+		}
+	})
+}
+
+func TestBuildSplitting(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFixture(t, root)
+
+	outputDirectory := filepath.Join(root, "dist")
+	writtenPaths, err := Build(
+		&buildConfig.Config{
+			SourceDirectory: filepath.Join(root, "src"),
+			OutputDirectory: outputDirectory,
+			PublicPath:      "/",
+			Splitting:       true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	readOutput := func(path string) string {
+		t.Helper()
+		contents, err := os.ReadFile(filepath.Join(outputDirectory, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatalf("read output: %v", err)
+		}
+		return string(contents)
+	}
+
+	findOutput := func(condition func(string) bool) string {
+		t.Helper()
+		for _, writtenPath := range writtenPaths {
+			if condition(writtenPath) {
+				return writtenPath
+			}
+		}
+		return ""
+	}
+
+	entryPattern := regexp.MustCompile(`^scripts/index-[A-Z0-9]+\.js$`)
+	chunkPattern := regexp.MustCompile(`^scripts/chunk-[A-Z0-9]+\.js$`)
+
+	entryPath := findOutput(entryPattern.MatchString)
+	if entryPath == "" {
+		t.Fatalf("no entry output in %v", writtenPaths)
+	}
+
+	var lazyChunkPath, sharedChunkPath string
+	for _, writtenPath := range writtenPaths {
+		if !chunkPattern.MatchString(writtenPath) {
+			continue
+		}
+		contents := readOutput(writtenPath)
+		if strings.Contains(contents, "lazy-extra-marker") {
+			lazyChunkPath = writtenPath
+		}
+		if strings.Contains(contents, "shared-code-marker") {
+			sharedChunkPath = writtenPath
+		}
+	}
+
+	t.Run("splits lazy and shared code out of the entry", func(t *testing.T) {
+		t.Parallel()
+		if lazyChunkPath == "" {
+			t.Fatalf("no lazy chunk in %v", writtenPaths)
+		}
+		if sharedChunkPath == "" {
+			t.Fatalf("no shared chunk in %v", writtenPaths)
+		}
+		entry := readOutput(entryPath)
+		if strings.Contains(entry, "lazy-extra-marker") {
+			t.Error("expected the lazily imported code to be split out of the entry")
+		}
+	})
+
+	page := readOutput("index.html")
+
+	t.Run("emits a module script", func(t *testing.T) {
+		t.Parallel()
+		scriptPattern := regexp.MustCompile(`<script type="module" src="/` + regexp.QuoteMeta(entryPath) + `" integrity="sha384-[^"]+" crossorigin="anonymous">`)
+		if !scriptPattern.MatchString(page) {
+			t.Errorf("expected a module script tag, got %q", page)
+		}
+	})
+
+	t.Run("provides import map integrity for every chunk", func(t *testing.T) {
+		t.Parallel()
+		importMapMatch := regexp.MustCompile(`<script type="importmap">(.*?)</script>`).FindStringSubmatch(page)
+		if importMapMatch == nil {
+			t.Fatalf("no import map in %q", page)
+		}
+
+		var importMap struct {
+			Integrity map[string]string `json:"integrity"`
+		}
+		if err := json.Unmarshal([]byte(importMapMatch[1]), &importMap); err != nil {
+			t.Fatalf("json unmarshal import map: %v", err)
+		}
+
+		for _, writtenPath := range writtenPaths {
+			if !strings.HasPrefix(writtenPath, "scripts/") || !strings.HasSuffix(writtenPath, ".js") {
+				continue
+			}
+			expected := integrityAttribute([]byte(readOutput(writtenPath)))
+			if importMap.Integrity["/"+writtenPath] != expected {
+				t.Errorf("import map integrity mismatch for %s", writtenPath)
+			}
+		}
+
+		if page[strings.Index(page, "importmap")] == 0 || strings.Index(page, "importmap") > strings.Index(page, "<script type=\"module\"") {
+			t.Error("expected the import map before the module script")
+		}
+	})
+
+	t.Run("preloads the static import closure but not lazy chunks", func(t *testing.T) {
+		t.Parallel()
+		preloadPattern := regexp.MustCompile(`<link rel="modulepreload" href="([^"]+)" integrity="(sha384-[^"]+)" crossorigin="anonymous"/?>`)
+		preloadedPaths := make(map[string]string)
+		for _, match := range preloadPattern.FindAllStringSubmatch(page, -1) {
+			preloadedPaths[match[1]] = match[2]
+		}
+
+		sharedIntegrity, ok := preloadedPaths["/"+sharedChunkPath]
+		if !ok {
+			t.Fatalf("expected a modulepreload for the shared chunk, got %v", preloadedPaths)
+		}
+		if sharedIntegrity != integrityAttribute([]byte(readOutput(sharedChunkPath))) {
+			t.Error("modulepreload integrity mismatch for the shared chunk")
+		}
+
+		if _, ok := preloadedPaths["/"+lazyChunkPath]; ok {
+			t.Error("expected the lazy chunk not to be preloaded")
 		}
 	})
 }
