@@ -280,6 +280,47 @@ func TestBuild(t *testing.T) {
 	})
 }
 
+func TestBuildRelativeDirectories(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFixture(t, root)
+
+	// esbuild reports absolute output paths, which must not break relative
+	// source and output directory configurations.
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	relativeRoot, err := filepath.Rel(workingDirectory, root)
+	if err != nil {
+		t.Skipf("cannot make %s relative to %s: %v", root, workingDirectory, err)
+	}
+
+	writtenPaths, err := Build(
+		&buildConfig.Config{
+			SourceDirectory: filepath.Join(relativeRoot, "src"),
+			OutputDirectory: filepath.Join(relativeRoot, "dist"),
+		},
+	)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	for _, pattern := range []string{`^scripts/index-[A-Z0-9]+\.js$`, `^index\.html$`} {
+		compiledPattern := regexp.MustCompile(pattern)
+		found := false
+		for _, writtenPath := range writtenPaths {
+			if compiledPattern.MatchString(writtenPath) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no output matching %s in %v", pattern, writtenPaths)
+		}
+	}
+}
+
 func TestBuildValidation(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {

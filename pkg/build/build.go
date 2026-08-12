@@ -522,6 +522,13 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 		return nil, empty_error.New("output directory")
 	}
 
+	// esbuild reports output files with absolute paths, so all path arithmetic
+	// uses the absolute output directory.
+	outputDirectory, err := filepath.Abs(configuration.OutputDirectory)
+	if err != nil {
+		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), configuration.OutputDirectory)
+	}
+
 	publicPath := configuration.PublicPath
 	if publicPath == "" {
 		publicPath = "/"
@@ -546,7 +553,7 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 	buildResult := api.Build(api.BuildOptions{
 		EntryPointsAdvanced: entryPoints,
 		Bundle:              true,
-		Outdir:              configuration.OutputDirectory,
+		Outdir:              outputDirectory,
 		EntryNames:          "[dir]/[name]-[hash]",
 		AssetNames:          temporaryAssetsPrefix + "[name]-[hash]",
 		PublicPath:          publicPath,
@@ -599,7 +606,7 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 	}
 
 	for _, file := range buildResult.OutputFiles {
-		relativePath, err := filepath.Rel(configuration.OutputDirectory, file.Path)
+		relativePath, err := filepath.Rel(outputDirectory, file.Path)
 		if err != nil {
 			return nil, motmedelErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), file.Path)
 		}
@@ -607,16 +614,12 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 	}
 
 	// The metafile references outputs by paths relative to the working directory.
-	absoluteOutputDirectory, err := filepath.Abs(configuration.OutputDirectory)
-	if err != nil {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), configuration.OutputDirectory)
-	}
 	makeOutputRelative := func(metafilePath string) (string, error) {
 		absolutePath, err := filepath.Abs(metafilePath)
 		if err != nil {
 			return "", motmedelErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), metafilePath)
 		}
-		relativePath, err := filepath.Rel(absoluteOutputDirectory, absolutePath)
+		relativePath, err := filepath.Rel(outputDirectory, absolutePath)
 		if err != nil {
 			return "", motmedelErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), absolutePath)
 		}
@@ -656,12 +659,12 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 		}
 	}
 
-	if err := os.RemoveAll(configuration.OutputDirectory); err != nil {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("os remove all: %w", err), configuration.OutputDirectory)
+	if err := os.RemoveAll(outputDirectory); err != nil {
+		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("os remove all: %w", err), outputDirectory)
 	}
 	writtenPaths := make([]string, 0, len(b.outputs))
 	for outputPath, contents := range b.outputs {
-		fullPath := filepath.Join(configuration.OutputDirectory, filepath.FromSlash(outputPath))
+		fullPath := filepath.Join(outputDirectory, filepath.FromSlash(outputPath))
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o700); err != nil {
 			return nil, motmedelErrors.NewWithTrace(fmt.Errorf("os mkdir all: %w", err), fullPath)
 		}
