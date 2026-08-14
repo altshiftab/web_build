@@ -29,6 +29,26 @@ func TestMinify(t *testing.T) {
 			input:    "<script>\nconst a = 1;\n</script>",
 			expected: "<script>\nconst a = 1;\n</script>",
 		},
+		{
+			name:     "preserves space between inline elements",
+			input:    "<p><span>Already signed in as</span> <span>user@example.com</span></p>",
+			expected: "<p><span>Already signed in as</span> <span>user@example.com</span></p>",
+		},
+		{
+			name:     "collapses newline between inline elements to a space",
+			input:    "<p><span>a</span>\n    <span>b</span></p>",
+			expected: "<p><span>a</span> <span>b</span></p>",
+		},
+		{
+			name:     "strips whitespace adjacent to block elements",
+			input:    "<div>\n  <p>a</p>\n  <span>b</span> <span>c</span>\n</div>",
+			expected: "<div><p>a</p><span>b</span> <span>c</span></div>",
+		},
+		{
+			name:     "preserves space between custom elements",
+			input:    "<body><magic-dialog></magic-dialog> <feedback-dialog></feedback-dialog></body>",
+			expected: "<body><magic-dialog></magic-dialog> <feedback-dialog></feedback-dialog></body>",
+		},
 	}
 
 	for _, testCase := range testCases {
