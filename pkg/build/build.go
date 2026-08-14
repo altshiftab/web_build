@@ -440,10 +440,12 @@ func (b *builder) preloadTags() []*html.Node {
 	return tags
 }
 
-// staticImportClosure returns the js outputs statically imported by the given
-// entry output, directly or transitively, in sorted order. Dynamic imports are
-// excluded: those chunks load lazily and get their integrity from the import map.
-func staticImportClosure(entryPath string, parsedMetafile *metafile) []string {
+// importClosure returns the js outputs imported by the given entry output,
+// directly or transitively, in sorted order. Static imports are always
+// followed; dynamic imports only when includeDynamic is set, as those chunks
+// load lazily and get their integrity from the import map rather than from
+// modulepreload links.
+func importClosure(entryPath string, parsedMetafile *metafile, includeDynamic bool) []string {
 	visited := map[string]struct{}{entryPath: {}}
 	queue := []string{entryPath}
 	var closure []string
@@ -457,7 +459,10 @@ func staticImportClosure(entryPath string, parsedMetafile *metafile) []string {
 			continue
 		}
 		for _, currentImport := range output.Imports {
-			if currentImport.Kind != "import-statement" || !strings.HasSuffix(currentImport.Path, ".js") {
+			if currentImport.Kind != "import-statement" && (!includeDynamic || currentImport.Kind != "dynamic-import") {
+				continue
+			}
+			if !strings.HasSuffix(currentImport.Path, ".js") {
 				continue
 			}
 			if _, ok := visited[currentImport.Path]; ok {
@@ -473,15 +478,14 @@ func staticImportClosure(entryPath string, parsedMetafile *metafile) []string {
 	return closure
 }
 
-// importMapTag builds an import map script whose integrity section covers every
-// emitted module chunk, so lazily loaded chunks are integrity-checked without
-// being preloaded.
-func (b *builder) importMapTag() (*html.Node, error) {
+// importMapTag builds an import map script whose integrity section covers the
+// page's entry and every module chunk the page can load, statically or lazily.
+// The map is scoped to the page's own import closure so that a page does not
+// disclose the chunk names of other entries.
+func (b *builder) importMapTag(entryPath string, parsedMetafile *metafile) (*html.Node, error) {
 	integrity := make(map[string]string)
-	for outputPath, contents := range b.outputs {
-		if strings.HasPrefix(outputPath, scriptsDirectoryName+"/") && strings.HasSuffix(outputPath, ".js") {
-			integrity[b.publicPath+outputPath] = integrityAttribute(contents)
-		}
+	for _, outputPath := range append(importClosure(entryPath, parsedMetafile, true), entryPath) {
+		integrity[b.publicPath+outputPath] = integrityAttribute(b.outputs[outputPath])
 	}
 
 	importMap, err := json.Marshal(map[string]map[string]string{"integrity": integrity})
@@ -539,7 +543,7 @@ func (b *builder) processPage(currentPage *page, parsedMetafile *metafile) error
 
 	// The import map must precede any module loading.
 	if b.configuration.Splitting {
-		importMapElement, err := b.importMapTag()
+		importMapElement, err := b.importMapTag(scriptPath, parsedMetafile)
 		if err != nil {
 			return fmt.Errorf("import map tag: %w", err)
 		}
@@ -551,7 +555,7 @@ func (b *builder) processPage(currentPage *page, parsedMetafile *metafile) error
 	if b.configuration.Splitting {
 		// Preloading the static import closure avoids a sequential fetch
 		// waterfall; lazily imported chunks are deliberately not preloaded.
-		for _, chunkPath := range staticImportClosure(scriptPath, parsedMetafile) {
+		for _, chunkPath := range importClosure(scriptPath, parsedMetafile, false) {
 			injectedTags = append(injectedTags, makeElement(
 				"link",
 				html.Attribute{Key: "rel", Val: "modulepreload"},
@@ -643,6 +647,11 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 		format = api.FormatESModule
 	}
 
+	sourcemap := api.SourceMapNone
+	if configuration.SourceMaps {
+		sourcemap = api.SourceMapLinked
+	}
+
 	buildResult := api.Build(api.BuildOptions{
 		EntryPointsAdvanced: entryPoints,
 		Bundle:              true,
@@ -658,7 +667,7 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 		MinifyWhitespace:    true,
 		MinifyIdentifiers:   true,
 		MinifySyntax:        true,
-		Sourcemap:           api.SourceMapLinked,
+		Sourcemap:           sourcemap,
 		LegalComments:       api.LegalCommentsLinked,
 		Metafile:            true,
 		Write:               false,

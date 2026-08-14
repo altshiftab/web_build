@@ -58,6 +58,9 @@ func main() {
 	var splitting bool
 	flag.BoolVar(&splitting, "splitting", false, "Emit ES modules with code splitting: dynamic imports become lazy chunks with import map integrity.")
 
+	var sourceMaps bool
+	flag.BoolVar(&sourceMaps, "sourcemap", false, "Emit linked .map files alongside the js and css outputs.")
+
 	extraEntries := make(map[string]string)
 	flag.Func("entry", "An extra entry point as name=path. Can be repeated.", func(value string) error {
 		name, path, err := parseEntry(value)
@@ -92,6 +95,7 @@ func main() {
 			PreloadFonts:    preloadFonts,
 			ExtraEntries:    extraEntries,
 			Splitting:       splitting,
+			SourceMaps:      sourceMaps,
 		},
 	)
 	if err != nil {

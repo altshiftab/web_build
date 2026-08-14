@@ -161,6 +161,20 @@ func TestBuild(t *testing.T) {
 		}
 	})
 
+	t.Run("emits no source maps by default", func(t *testing.T) {
+		t.Parallel()
+		for _, writtenPath := range writtenPaths {
+			if strings.HasSuffix(writtenPath, ".map") {
+				t.Errorf("unexpected source map output: %s", writtenPath)
+			}
+		}
+
+		_, script := readOutput(`^scripts/index-[A-Z0-9]+\.js$`)
+		if strings.Contains(script, "sourceMappingURL") {
+			t.Error("unexpected sourceMappingURL comment in the script output")
+		}
+	})
+
 	t.Run("emits no script for the style-only entry", func(t *testing.T) {
 		t.Parallel()
 		readOutput(`^styles/styles-[A-Z0-9]+\.css$`)
@@ -370,7 +384,7 @@ func TestBuildSplitting(t *testing.T) {
 		}
 	})
 
-	t.Run("provides import map integrity for every chunk", func(t *testing.T) {
+	t.Run("scopes import map integrity to the page's import closure", func(t *testing.T) {
 		t.Parallel()
 		importMapMatch := regexp.MustCompile(`<script type="importmap">(.*?)</script>`).FindStringSubmatch(page)
 		if importMapMatch == nil {
@@ -384,14 +398,23 @@ func TestBuildSplitting(t *testing.T) {
 			t.Fatalf("json unmarshal import map: %v", err)
 		}
 
-		for _, writtenPath := range writtenPaths {
-			if !strings.HasPrefix(writtenPath, "scripts/") || !strings.HasSuffix(writtenPath, ".js") {
-				continue
+		expectedPaths := []string{entryPath, sharedChunkPath, lazyChunkPath}
+		for _, expectedPath := range expectedPaths {
+			expected := integrityAttribute([]byte(readOutput(expectedPath)))
+			if importMap.Integrity["/"+expectedPath] != expected {
+				t.Errorf("import map integrity mismatch for %s", expectedPath)
 			}
-			expected := integrityAttribute([]byte(readOutput(writtenPath)))
-			if importMap.Integrity["/"+writtenPath] != expected {
-				t.Errorf("import map integrity mismatch for %s", writtenPath)
-			}
+		}
+		if len(importMap.Integrity) != len(expectedPaths) {
+			t.Errorf("expected %d import map entries, got %v", len(expectedPaths), importMap.Integrity)
+		}
+
+		otherEntryPath := findOutput(regexp.MustCompile(`^scripts/other-[A-Z0-9]+\.js$`).MatchString)
+		if otherEntryPath == "" {
+			t.Fatalf("no other entry output in %v", writtenPaths)
+		}
+		if _, ok := importMap.Integrity["/"+otherEntryPath]; ok {
+			t.Error("expected the other entry to be absent from the page's import map")
 		}
 
 		if page[strings.Index(page, "importmap")] == 0 || strings.Index(page, "importmap") > strings.Index(page, "<script type=\"module\"") {
@@ -419,6 +442,41 @@ func TestBuildSplitting(t *testing.T) {
 			t.Error("expected the lazy chunk not to be preloaded")
 		}
 	})
+}
+
+func TestBuildSourceMaps(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFixture(t, root)
+
+	outputDirectory := filepath.Join(root, "dist")
+	writtenPaths, err := Build(
+		&buildConfig.Config{
+			SourceDirectory: filepath.Join(root, "src"),
+			OutputDirectory: outputDirectory,
+			SourceMaps:      true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	for _, pattern := range []string{
+		`^scripts/index-[A-Z0-9]+\.js\.map$`,
+		`^styles/index-[A-Z0-9]+\.css\.map$`,
+	} {
+		compiledPattern := regexp.MustCompile(pattern)
+		found := false
+		for _, writtenPath := range writtenPaths {
+			if compiledPattern.MatchString(writtenPath) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no output matching %s in %v", pattern, writtenPaths)
+		}
+	}
 }
 
 func TestBuildRelativeDirectories(t *testing.T) {
