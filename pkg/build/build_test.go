@@ -444,6 +444,98 @@ func TestBuildSplitting(t *testing.T) {
 	})
 }
 
+func TestBuildSplittingSkipModulePreload(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFixture(t, root)
+
+	outputDirectory := filepath.Join(root, "dist")
+	writtenPaths, err := Build(
+		&buildConfig.Config{
+			SourceDirectory:   filepath.Join(root, "src"),
+			OutputDirectory:   outputDirectory,
+			PublicPath:        "/",
+			Splitting:         true,
+			SkipModulePreload: true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	readOutput := func(path string) string {
+		t.Helper()
+		contents, err := os.ReadFile(filepath.Join(outputDirectory, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatalf("read output: %v", err)
+		}
+		return string(contents)
+	}
+
+	entryPattern := regexp.MustCompile(`^scripts/index-[A-Z0-9]+\.js$`)
+	chunkPattern := regexp.MustCompile(`^scripts/chunk-[A-Z0-9]+\.js$`)
+
+	var entryPath string
+	var chunkPaths []string
+	for _, writtenPath := range writtenPaths {
+		if entryPattern.MatchString(writtenPath) {
+			entryPath = writtenPath
+		}
+		if chunkPattern.MatchString(writtenPath) {
+			chunkPaths = append(chunkPaths, writtenPath)
+		}
+	}
+	if entryPath == "" {
+		t.Fatalf("no entry output in %v", writtenPaths)
+	}
+	if len(chunkPaths) == 0 {
+		t.Fatalf("no chunk outputs in %v", writtenPaths)
+	}
+
+	page := readOutput("index.html")
+
+	t.Run("emits no modulepreload links", func(t *testing.T) {
+		t.Parallel()
+		if strings.Contains(page, "modulepreload") {
+			t.Errorf("expected no modulepreload link, got %q", page)
+		}
+	})
+
+	t.Run("still emits the module script with integrity", func(t *testing.T) {
+		t.Parallel()
+		scriptPattern := regexp.MustCompile(
+			`<script type="module" src="/` + regexp.QuoteMeta(entryPath) + `" integrity="sha384-[^"]+" crossorigin="anonymous">`,
+		)
+		if !scriptPattern.MatchString(page) {
+			t.Errorf("expected a module script tag, got %q", page)
+		}
+	})
+
+	// Skipping the links must not cost integrity coverage: it is the import map
+	// that the chunks are meant to get their integrity from.
+	t.Run("keeps import map integrity for the entry and every chunk", func(t *testing.T) {
+		t.Parallel()
+		importMapMatch := regexp.MustCompile(`<script type="importmap">(.*?)</script>`).FindStringSubmatch(page)
+		if importMapMatch == nil {
+			t.Fatalf("no import map in %q", page)
+		}
+
+		var importMap struct {
+			Integrity map[string]string `json:"integrity"`
+		}
+		if err := json.Unmarshal([]byte(importMapMatch[1]), &importMap); err != nil {
+			t.Fatalf("json unmarshal import map: %v", err)
+		}
+
+		for _, expectedPath := range append([]string{entryPath}, chunkPaths...) {
+			expected := integrityAttribute([]byte(readOutput(expectedPath)))
+			if importMap.Integrity["/"+expectedPath] != expected {
+				t.Errorf("import map integrity mismatch for %s", expectedPath)
+			}
+		}
+	})
+}
+
 func TestBuildSourceMaps(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -58,6 +58,9 @@ func main() {
 	var splitting bool
 	flag.BoolVar(&splitting, "splitting", false, "Emit ES modules with code splitting: dynamic imports become lazy chunks with import map integrity.")
 
+	var skipModulePreload bool
+	flag.BoolVar(&skipModulePreload, "skip-modulepreload", false, "Omit the modulepreload links for the static import closure. The import map still provides integrity for every chunk.")
+
 	var sourceMaps bool
 	flag.BoolVar(&sourceMaps, "sourcemap", false, "Emit linked .map files alongside the js and css outputs.")
 
@@ -89,13 +92,14 @@ func main() {
 
 	writtenPaths, err := build.Build(
 		&buildConfig.Config{
-			SourceDirectory: sourceDirectory,
-			OutputDirectory: outputDirectory,
-			PublicPath:      publicPath,
-			PreloadFonts:    preloadFonts,
-			ExtraEntries:    extraEntries,
-			Splitting:       splitting,
-			SourceMaps:      sourceMaps,
+			SourceDirectory:   sourceDirectory,
+			OutputDirectory:   outputDirectory,
+			PublicPath:        publicPath,
+			PreloadFonts:      preloadFonts,
+			ExtraEntries:      extraEntries,
+			Splitting:         splitting,
+			SkipModulePreload: skipModulePreload,
+			SourceMaps:        sourceMaps,
 		},
 	)
 	if err != nil {

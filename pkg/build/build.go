@@ -552,7 +552,7 @@ func (b *builder) processPage(currentPage *page, parsedMetafile *metafile) error
 
 	injectedTags = append(injectedTags, b.preloadTags()...)
 
-	if b.configuration.Splitting {
+	if b.configuration.Splitting && !b.configuration.SkipModulePreload {
 		// Preloading the static import closure avoids a sequential fetch
 		// waterfall; lazily imported chunks are deliberately not preloaded.
 		for _, chunkPath := range importClosure(scriptPath, parsedMetafile, false) {
