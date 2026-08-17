@@ -16,13 +16,13 @@ import (
 const templateExpressionPlaceholder = "@TEMPLATE_EXPRESSION"
 
 var (
-	whitespaceRegexp         = regexp.MustCompile(`\s+`)
-	selectorSeparatorRegexp  = regexp.MustCompile(`\s*([>~+,])\s*`)
-	valueSeparatorRegexp     = regexp.MustCompile(`\s*([,:/])\s*`)
-	openParenthesisRegexp    = regexp.MustCompile(`\(\s+`)
-	closeParenthesisRegexp   = regexp.MustCompile(`\s+\)`)
-	importantSuffixRegexp    = regexp.MustCompile(`(?i)\s*!\s*important$`)
-	atRuleNameRegexp         = regexp.MustCompile(`^@[-\w]+`)
+	whitespaceRegexp        = regexp.MustCompile(`\s+`)
+	selectorSeparatorRegexp = regexp.MustCompile(`\s*([>~+,])\s*`)
+	valueSeparatorRegexp    = regexp.MustCompile(`\s*([,:/])\s*`)
+	openParenthesisRegexp   = regexp.MustCompile(`\(\s+`)
+	closeParenthesisRegexp  = regexp.MustCompile(`\s+\)`)
+	importantSuffixRegexp   = regexp.MustCompile(`(?i)\s*!\s*important$`)
+	atRuleNameRegexp        = regexp.MustCompile(`^@[-\w]+`)
 )
 
 type segmentPart struct {

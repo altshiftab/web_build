@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
-	motmedelLog "github.com/Motmedel/utils_go/pkg/log"
-	motmedelErrorLogger "github.com/Motmedel/utils_go/pkg/log/error_logger"
+	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
+	altshiftLog "github.com/altshiftab/utils_go/pkg/log"
+	altshiftErrorLogger "github.com/altshiftab/utils_go/pkg/log/error_logger"
 	"github.com/altshiftab/web_build/pkg/build"
 	buildConfig "github.com/altshiftab/web_build/pkg/build/types/config"
 )
@@ -28,15 +28,15 @@ func parseEntry(value string) (string, string, error) {
 }
 
 func main() {
-	logger := &motmedelErrorLogger.Logger{
+	logger := &altshiftErrorLogger.Logger{
 		Logger: slog.New(
-			&motmedelLog.ContextHandler{
+			&altshiftLog.ContextHandler{
 				Next: slog.NewJSONHandler(
 					os.Stderr,
 					&slog.HandlerOptions{AddSource: false, Level: slog.LevelInfo},
 				),
-				Extractors: []motmedelLog.ContextExtractor{
-					&motmedelLog.ErrorContextExtractor{},
+				Extractors: []altshiftLog.ContextExtractor{
+					&altshiftLog.ErrorContextExtractor{},
 				},
 			},
 		),
@@ -83,7 +83,7 @@ func main() {
 		if err != nil {
 			logger.FatalWithExitingMessage(
 				"The preload fonts pattern could not be compiled.",
-				motmedelErrors.NewWithTrace(fmt.Errorf("regexp compile: %w", err), preloadFontsPattern),
+				altshiftErrors.NewWithTrace(fmt.Errorf("regexp compile: %w", err), preloadFontsPattern),
 			)
 		}
 	}
@@ -105,7 +105,7 @@ func main() {
 	if err != nil {
 		logger.FatalWithExitingMessage(
 			"An error occurred when building.",
-			motmedelErrors.New(fmt.Errorf("build: %w", err)),
+			altshiftErrors.New(fmt.Errorf("build: %w", err)),
 		)
 	}
 

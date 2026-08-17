@@ -25,9 +25,9 @@ import (
 	"sort"
 	"strings"
 
-	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
-	"github.com/Motmedel/utils_go/pkg/errors/types/empty_error"
-	"github.com/Motmedel/utils_go/pkg/errors/types/nil_error"
+	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
+	"github.com/altshiftab/utils_go/pkg/errors/types/empty_error"
+	"github.com/altshiftab/utils_go/pkg/errors/types/nil_error"
 	buildConfig "github.com/altshiftab/web_build/pkg/build/types/config"
 	"github.com/altshiftab/web_build/pkg/html_minifier"
 	"github.com/altshiftab/web_build/pkg/lit_minifier"
@@ -129,7 +129,7 @@ func litPlugin() api.Plugin {
 				func(args api.OnLoadArgs) (api.OnLoadResult, error) {
 					data, err := os.ReadFile(args.Path)
 					if err != nil {
-						return api.OnLoadResult{}, motmedelErrors.NewWithTrace(
+						return api.OnLoadResult{}, altshiftErrors.NewWithTrace(
 							fmt.Errorf("os read file: %w", err),
 							args.Path,
 						)
@@ -144,7 +144,7 @@ func litPlugin() api.Plugin {
 							TsconfigRaw: transformTsconfigRaw,
 						})
 						if len(result.Errors) != 0 {
-							return api.OnLoadResult{}, motmedelErrors.NewWithTrace(
+							return api.OnLoadResult{}, altshiftErrors.NewWithTrace(
 								fmt.Errorf(
 									"%w: %s",
 									ErrEsbuildTransform,
@@ -158,7 +158,7 @@ func litPlugin() api.Plugin {
 
 					minified, err := lit_minifier.Minify(source)
 					if err != nil {
-						return api.OnLoadResult{}, motmedelErrors.New(
+						return api.OnLoadResult{}, altshiftErrors.New(
 							fmt.Errorf("lit minifier minify: %w", err),
 							args.Path,
 						)
@@ -179,7 +179,7 @@ func discoverEntryPoints(configuration *buildConfig.Config) ([]api.EntryPoint, e
 	pattern := filepath.Join(configuration.SourceDirectory, scriptsDirectoryName, "*.ts")
 	scriptPaths, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("filepath glob: %w", err), pattern)
+		return nil, altshiftErrors.NewWithTrace(fmt.Errorf("filepath glob: %w", err), pattern)
 	}
 
 	var entryPoints []api.EntryPoint
@@ -223,7 +223,7 @@ func discoverPages(configuration *buildConfig.Config) ([]*page, error) {
 
 		relativePath, err := filepath.Rel(configuration.SourceDirectory, path)
 		if err != nil {
-			return motmedelErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), path)
+			return altshiftErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), path)
 		}
 
 		pages = append(pages, &page{
@@ -238,7 +238,7 @@ func discoverPages(configuration *buildConfig.Config) ([]*page, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, motmedelErrors.New(fmt.Errorf("filepath walk dir: %w", err), configuration.SourceDirectory)
+		return nil, altshiftErrors.New(fmt.Errorf("filepath walk dir: %w", err), configuration.SourceDirectory)
 	}
 
 	return pages, nil
@@ -320,7 +320,7 @@ func (b *builder) emitFileAsset(sourcePath string) (string, error) {
 	// #nosec G703 -- reading files referenced from the user's own templates is the point.
 	contents, err := os.ReadFile(sourcePath)
 	if err != nil {
-		return "", motmedelErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), sourcePath)
+		return "", altshiftErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), sourcePath)
 	}
 
 	extension := strings.ToLower(filepath.Ext(sourcePath))
@@ -352,7 +352,7 @@ func (b *builder) resolveReference(value string, templateDirectory string) (stri
 	modulePath := strings.TrimPrefix(value, "~")
 	directory, err := filepath.Abs(templateDirectory)
 	if err != nil {
-		return "", motmedelErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), templateDirectory)
+		return "", altshiftErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), templateDirectory)
 	}
 
 	for {
@@ -363,7 +363,7 @@ func (b *builder) resolveReference(value string, templateDirectory string) (stri
 		}
 		parent := filepath.Dir(directory)
 		if parent == directory {
-			return "", motmedelErrors.NewWithTrace(fmt.Errorf("%w: %s", ErrModuleAssetNotFound, value))
+			return "", altshiftErrors.NewWithTrace(fmt.Errorf("%w: %s", ErrModuleAssetNotFound, value))
 		}
 		directory = parent
 	}
@@ -490,7 +490,7 @@ func (b *builder) importMapTag(entryPath string, parsedMetafile *metafile) (*htm
 
 	importMap, err := json.Marshal(map[string]map[string]string{"integrity": integrity})
 	if err != nil {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("json marshal import map: %w", err))
+		return nil, altshiftErrors.NewWithTrace(fmt.Errorf("json marshal import map: %w", err))
 	}
 
 	scriptElement := makeElement("script", html.Attribute{Key: "type", Val: "importmap"})
@@ -511,18 +511,18 @@ func (b *builder) pageChunkFiles(chunkName string, parsedMetafile *metafile) (st
 		}
 	}
 
-	return "", "", motmedelErrors.NewWithTrace(fmt.Errorf("%w: %s", ErrNoEntrypointForChunk, chunkName))
+	return "", "", altshiftErrors.NewWithTrace(fmt.Errorf("%w: %s", ErrNoEntrypointForChunk, chunkName))
 }
 
 func (b *builder) processPage(currentPage *page, parsedMetafile *metafile) error {
 	templateContents, err := os.ReadFile(currentPage.templatePath)
 	if err != nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), currentPage.templatePath)
+		return altshiftErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), currentPage.templatePath)
 	}
 
 	document, err := html.Parse(bytes.NewReader(templateContents))
 	if err != nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("html parse: %w", err), currentPage.templatePath)
+		return altshiftErrors.NewWithTrace(fmt.Errorf("html parse: %w", err), currentPage.templatePath)
 	}
 
 	if err := b.rewriteReferences(document, filepath.Dir(currentPage.templatePath)); err != nil {
@@ -531,7 +531,7 @@ func (b *builder) processPage(currentPage *page, parsedMetafile *metafile) error
 
 	headElement := findElement(document, "head")
 	if headElement == nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("%w: %s", ErrNoHeadElement, currentPage.templatePath))
+		return altshiftErrors.NewWithTrace(fmt.Errorf("%w: %s", ErrNoHeadElement, currentPage.templatePath))
 	}
 
 	scriptPath, cssPath, err := b.pageChunkFiles(currentPage.chunkName, parsedMetafile)
@@ -594,7 +594,7 @@ func (b *builder) processPage(currentPage *page, parsedMetafile *metafile) error
 
 	var renderedDocument bytes.Buffer
 	if err := html.Render(&renderedDocument, document); err != nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("html render: %w", err), currentPage.outputName)
+		return altshiftErrors.NewWithTrace(fmt.Errorf("html render: %w", err), currentPage.outputName)
 	}
 
 	b.outputs[currentPage.outputName] = []byte(html_minifier.Minify(renderedDocument.String()))
@@ -618,7 +618,7 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 	// uses the absolute output directory.
 	outputDirectory, err := filepath.Abs(configuration.OutputDirectory)
 	if err != nil {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), configuration.OutputDirectory)
+		return nil, altshiftErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), configuration.OutputDirectory)
 	}
 
 	publicPath := configuration.PublicPath
@@ -687,7 +687,7 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 		Plugins: []api.Plugin{litPlugin()},
 	})
 	if len(buildResult.Errors) != 0 {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf(
+		return nil, altshiftErrors.NewWithTrace(fmt.Errorf(
 			"%w: %s",
 			ErrEsbuildBuild,
 			strings.Join(api.FormatMessages(buildResult.Errors, api.FormatMessagesOptions{}), "\n"),
@@ -699,7 +699,7 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 
 	var parsedMetafile metafile
 	if err := json.Unmarshal([]byte(buildResult.Metafile), &parsedMetafile); err != nil {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("json unmarshal metafile: %w", err))
+		return nil, altshiftErrors.NewWithTrace(fmt.Errorf("json unmarshal metafile: %w", err))
 	}
 
 	b := &builder{
@@ -712,7 +712,7 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 	for _, file := range buildResult.OutputFiles {
 		relativePath, err := filepath.Rel(outputDirectory, file.Path)
 		if err != nil {
-			return nil, motmedelErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), file.Path)
+			return nil, altshiftErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), file.Path)
 		}
 		b.outputs[filepath.ToSlash(relativePath)] = file.Contents
 	}
@@ -721,11 +721,11 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 	makeOutputRelative := func(metafilePath string) (string, error) {
 		absolutePath, err := filepath.Abs(metafilePath)
 		if err != nil {
-			return "", motmedelErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), metafilePath)
+			return "", altshiftErrors.NewWithTrace(fmt.Errorf("filepath abs: %w", err), metafilePath)
 		}
 		relativePath, err := filepath.Rel(outputDirectory, absolutePath)
 		if err != nil {
-			return "", motmedelErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), absolutePath)
+			return "", altshiftErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), absolutePath)
 		}
 		return filepath.ToSlash(relativePath), nil
 	}
@@ -769,16 +769,16 @@ func Build(configuration *buildConfig.Config) ([]string, error) {
 	}
 
 	if err := os.RemoveAll(outputDirectory); err != nil {
-		return nil, motmedelErrors.NewWithTrace(fmt.Errorf("os remove all: %w", err), outputDirectory)
+		return nil, altshiftErrors.NewWithTrace(fmt.Errorf("os remove all: %w", err), outputDirectory)
 	}
 	writtenPaths := make([]string, 0, len(b.outputs))
 	for outputPath, contents := range b.outputs {
 		fullPath := filepath.Join(outputDirectory, filepath.FromSlash(outputPath))
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o700); err != nil {
-			return nil, motmedelErrors.NewWithTrace(fmt.Errorf("os mkdir all: %w", err), fullPath)
+			return nil, altshiftErrors.NewWithTrace(fmt.Errorf("os mkdir all: %w", err), fullPath)
 		}
 		if err := os.WriteFile(fullPath, contents, 0o600); err != nil {
-			return nil, motmedelErrors.NewWithTrace(fmt.Errorf("os write file: %w", err), fullPath)
+			return nil, altshiftErrors.NewWithTrace(fmt.Errorf("os write file: %w", err), fullPath)
 		}
 		writtenPaths = append(writtenPaths, outputPath)
 	}

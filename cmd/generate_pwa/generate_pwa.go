@@ -14,9 +14,9 @@ import (
 	"sort"
 	"strings"
 
-	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
-	motmedelLog "github.com/Motmedel/utils_go/pkg/log"
-	motmedelErrorLogger "github.com/Motmedel/utils_go/pkg/log/error_logger"
+	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
+	altshiftLog "github.com/altshiftab/utils_go/pkg/log"
+	altshiftErrorLogger "github.com/altshiftab/utils_go/pkg/log/error_logger"
 	"github.com/evanw/esbuild/pkg/api"
 )
 
@@ -49,7 +49,7 @@ func collectPrecachePaths(distDirectory string) ([]string, error) {
 
 		relativePath, err := filepath.Rel(distDirectory, path)
 		if err != nil {
-			return motmedelErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), path)
+			return altshiftErrors.NewWithTrace(fmt.Errorf("filepath rel: %w", err), path)
 		}
 		relativePath = filepath.ToSlash(relativePath)
 
@@ -64,7 +64,7 @@ func collectPrecachePaths(distDirectory string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, motmedelErrors.New(fmt.Errorf("filepath walk dir: %w", err), distDirectory)
+		return nil, altshiftErrors.New(fmt.Errorf("filepath walk dir: %w", err), distDirectory)
 	}
 
 	sort.Strings(paths)
@@ -93,7 +93,7 @@ func computeVersion(distDirectory string, precachePaths []string) (string, error
 	for _, precachePath := range precachePaths {
 		contents, err := os.ReadFile(filepath.Join(distDirectory, filepath.FromSlash(precachePath)))
 		if err != nil {
-			return "", motmedelErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), precachePath)
+			return "", altshiftErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), precachePath)
 		}
 		hash.Write([]byte(precachePath))
 		hash.Write([]byte{0})
@@ -107,17 +107,17 @@ func computeVersion(distDirectory string, precachePaths []string) (string, error
 func generate(sourceDirectory string, distDirectory string) error {
 	iconsDirectory := filepath.Join(distDirectory, "icons")
 	if err := os.MkdirAll(iconsDirectory, 0o700); err != nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("os mkdir all: %w", err), iconsDirectory)
+		return altshiftErrors.NewWithTrace(fmt.Errorf("os mkdir all: %w", err), iconsDirectory)
 	}
 	for _, iconFileName := range iconFileNames {
 		// #nosec G703 -- reading the user's own frontend sources is the point.
 		contents, err := os.ReadFile(filepath.Join(sourceDirectory, "icons", iconFileName))
 		if err != nil {
-			return motmedelErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), iconFileName)
+			return altshiftErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), iconFileName)
 		}
 		// #nosec G703 -- writing into the user's own dist directory is the point.
 		if err := os.WriteFile(filepath.Join(iconsDirectory, iconFileName), contents, 0o600); err != nil {
-			return motmedelErrors.NewWithTrace(fmt.Errorf("os write file: %w", err), iconFileName)
+			return altshiftErrors.NewWithTrace(fmt.Errorf("os write file: %w", err), iconFileName)
 		}
 	}
 
@@ -133,14 +133,14 @@ func generate(sourceDirectory string, distDirectory string) error {
 
 	precacheUrlsData, err := json.Marshal(makePrecacheUrls(precachePaths))
 	if err != nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("json marshal: %w", err))
+		return altshiftErrors.NewWithTrace(fmt.Errorf("json marshal: %w", err))
 	}
 
 	templatePath := filepath.Join(sourceDirectory, "sw-template.js")
 	// #nosec G703 -- reading the user's own frontend sources is the point.
 	template, err := os.ReadFile(templatePath)
 	if err != nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), templatePath)
+		return altshiftErrors.NewWithTrace(fmt.Errorf("os read file: %w", err), templatePath)
 	}
 
 	serviceWorker := strings.ReplaceAll(string(template), "__BUILD_HASH__", version)
@@ -156,7 +156,7 @@ func generate(sourceDirectory string, distDirectory string) error {
 		MinifySyntax:      true,
 	})
 	if len(transformResult.Errors) != 0 {
-		return motmedelErrors.NewWithTrace(fmt.Errorf(
+		return altshiftErrors.NewWithTrace(fmt.Errorf(
 			"%w: %s",
 			ErrEsbuildTransform,
 			strings.Join(api.FormatMessages(transformResult.Errors, api.FormatMessagesOptions{}), "\n"),
@@ -167,22 +167,22 @@ func generate(sourceDirectory string, distDirectory string) error {
 	serviceWorkerPath := filepath.Join(distDirectory, serviceWorkerFileName)
 	// #nosec G703 -- writing into the user's own dist directory is the point.
 	if err := os.WriteFile(serviceWorkerPath, []byte(serviceWorker), 0o600); err != nil {
-		return motmedelErrors.NewWithTrace(fmt.Errorf("os write file: %w", err), serviceWorkerPath)
+		return altshiftErrors.NewWithTrace(fmt.Errorf("os write file: %w", err), serviceWorkerPath)
 	}
 
 	return nil
 }
 
 func main() {
-	logger := &motmedelErrorLogger.Logger{
+	logger := &altshiftErrorLogger.Logger{
 		Logger: slog.New(
-			&motmedelLog.ContextHandler{
+			&altshiftLog.ContextHandler{
 				Next: slog.NewJSONHandler(
 					os.Stderr,
 					&slog.HandlerOptions{AddSource: false, Level: slog.LevelInfo},
 				),
-				Extractors: []motmedelLog.ContextExtractor{
-					&motmedelLog.ErrorContextExtractor{},
+				Extractors: []altshiftLog.ContextExtractor{
+					&altshiftLog.ErrorContextExtractor{},
 				},
 			},
 		),
@@ -200,7 +200,7 @@ func main() {
 	if err := generate(sourceDirectory, distDirectory); err != nil {
 		logger.FatalWithExitingMessage(
 			"An error occurred when generating the PWA assets.",
-			motmedelErrors.New(fmt.Errorf("generate: %w", err)),
+			altshiftErrors.New(fmt.Errorf("generate: %w", err)),
 		)
 	}
 }

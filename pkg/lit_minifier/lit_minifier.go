@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode"
 
-	motmedelErrors "github.com/Motmedel/utils_go/pkg/errors"
+	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
 	"github.com/altshiftab/web_build/pkg/css_minifier"
 	"github.com/tdewolff/parse/v2"
 	"github.com/tdewolff/parse/v2/js"
@@ -68,7 +68,7 @@ func tokenize(source string) ([]*token, error) {
 		tokenType, text := lexer.Next()
 		if tokenType == js.ErrorToken {
 			if err := lexer.Err(); !errors.Is(err, io.EOF) {
-				return nil, motmedelErrors.NewWithTrace(fmt.Errorf("js lexer: %w", err))
+				return nil, altshiftErrors.NewWithTrace(fmt.Errorf("js lexer: %w", err))
 			}
 			break
 		}
@@ -78,7 +78,7 @@ func tokenize(source string) ([]*token, error) {
 			tokenType, text = lexer.RegExp()
 			if tokenType == js.ErrorToken {
 				if err := lexer.Err(); err != nil {
-					return nil, motmedelErrors.NewWithTrace(fmt.Errorf("js lexer regexp: %w", err))
+					return nil, altshiftErrors.NewWithTrace(fmt.Errorf("js lexer regexp: %w", err))
 				}
 				break
 			}

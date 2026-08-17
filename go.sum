@@ -1,5 +1,5 @@
-github.com/Motmedel/utils_go v1.9.0 h1:HzsKFofqIopOpvtsrxBN22mkGlFloMw5y957z/GTFNI=
-github.com/Motmedel/utils_go v1.9.0/go.mod h1:OW6mJSOYgP8XP7NEqsAlfKP5U6OyR6oTI/Z/SZsxmpw=
+github.com/altshiftab/utils_go v1.22.0 h1:QrAOa3guwwB0b/DX7sfDCWmxGK1gGtifgV6gtOhmWHc=
+github.com/altshiftab/utils_go v1.22.0/go.mod h1:VSr1HgvPdUxUV9Y97SfmxANI27QMZ6V1co3/pDlZ8A8=
 github.com/evanw/esbuild v0.28.2 h1:A2uETn4jrQTcXaT/shwTDTYBxDjl7fV7nXmUrJxfA2w=
 github.com/evanw/esbuild v0.28.2/go.mod h1:D2vIQZqV/vIf/VRHtViaUtViZmG7o+kKmlBfVQuRi48=
 github.com/tdewolff/parse/v2 v2.8.16 h1:bLk5svUOQRkW/Y2SJ+DeENSIkZBcTIkq+Atyv5D8feI=
