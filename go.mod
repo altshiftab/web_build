@@ -1,6 +1,6 @@
 module github.com/altshiftab/web_build
 
-go 1.26.5
+go 1.27
 
 require (
 	github.com/altshiftab/utils_go v1.22.0
