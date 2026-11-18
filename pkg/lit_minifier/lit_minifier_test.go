@@ -102,6 +102,21 @@ func TestMinify(t *testing.T) {
 			expectedEqual: "const half = total / 2; const styles = css`.a{color:red}`;",
 		},
 		{
+			name:          "leaves a css template alone when a comment holds a substitution",
+			input:         "const s = css`/* ${a} */ .b { color: ${c}; }`;",
+			expectedEqual: "const s = css`/* ${a} */ .b { color: ${c}; }`;",
+		},
+		{
+			name:          "leaves a css template alone when its text holds the placeholder",
+			input:         "const s = css`.a::after { content: \"@TEMPLATE_EXPRESSION\"; color: ${c}; }`;",
+			expectedEqual: "const s = css`.a::after { content: \"@TEMPLATE_EXPRESSION\"; color: ${c}; }`;",
+		},
+		{
+			name:          "keeps a kept comment holding a substitution",
+			input:         "const s = css`/*! ${a} */ .b { color: ${c}; }`;",
+			expectedEqual: "const s = css`/*! ${a} */.b{color:${c}}`;",
+		},
+		{
 			name:          "minifies templates nested behind braces in substitutions",
 			input:         "html`  <p>  ${ {a: css`  .a { color: red; }  `}.a }  </p>  ${ (() => { return html`  <b>  x  </b>  `; })() }  `",
 			expectedEqual: "html`<p> ${ {a: css`.a{color:red}`}.a } </p> ${ (() => { return html`<b> x </b>`; })() }`",

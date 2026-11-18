@@ -51,15 +51,16 @@ type replacement struct {
 	text  string
 }
 
+// minifyCssQuasis minifies the quasis as one stylesheet, a placeholder standing in for each
+// substitution. A substitution the minifier dropped, as it drops a comment holding one, would leave
+// every later substitution in the place of the one before it; the quasis are then left as they
+// were.
 func minifyCssQuasis(quasis []string) []string {
 	parts := strings.Split(css_minifier.Minify(strings.Join(quasis, placeholder)), placeholder)
-	minified := make([]string, len(quasis))
-	for i := range quasis {
-		if i < len(parts) {
-			minified[i] = parts[i]
-		}
+	if len(parts) != len(quasis) {
+		return quasis
 	}
-	return minified
+	return parts
 }
 
 func minifyHtmlQuasis(quasis []string) []string {
