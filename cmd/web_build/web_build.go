@@ -2,14 +2,16 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 
+	argumentParser "github.com/altshiftab/utils_go/pkg/cli/argument_parser"
+	"github.com/altshiftab/utils_go/pkg/cli/argument_parser/option"
 	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
 	altshiftLog "github.com/altshiftab/utils_go/pkg/log"
 	altshiftErrorLogger "github.com/altshiftab/utils_go/pkg/log/error_logger"
@@ -17,14 +19,99 @@ import (
 	buildConfig "github.com/altshiftab/web_build/pkg/build/types/config"
 )
 
+const (
+	programName = "web_build"
+	exitUsage   = 2
+)
+
 var ErrInvalidEntryFormat = errors.New("invalid entry format (expected name=path)")
+
+type arguments struct {
+	sourceDirectory     string
+	outputDirectory     string
+	publicPath          string
+	preloadFontsPattern string
+	entries             []string
+	splitting           bool
+	skipModulePreload   bool
+	sourceMaps          bool
+}
+
+func newParser(args *arguments, output io.Writer) *argumentParser.Parser {
+	return &argumentParser.Parser{
+		ProgramName: programName,
+		Description: "Build a site for production: bundle and minify the TypeScript entries in the source directory's scripts directory, hash the assets, and write each HTML page with its scripts and stylesheets under subresource integrity.",
+		Output:      output,
+		Options: []option.Option{
+			option.WithMetavar(
+				option.WithDefault(option.NewStringOption(0, "source", "the source directory", false, &args.sourceDirectory), "src"),
+				"PATH",
+			),
+			option.WithMetavar(
+				option.WithDefault(option.NewStringOption(0, "output", "the output directory, replaced as a whole", false, &args.outputDirectory), "dist"),
+				"PATH",
+			),
+			option.WithMetavar(
+				option.WithDefault(option.NewStringOption(0, "public-path", "the public path prefix of emitted URLs", false, &args.publicPath), "/"),
+				"PATH",
+			),
+			option.WithMetavar(
+				option.NewStringOption(0, "preload-fonts", "a regular expression matching the font assets to preload", false, &args.preloadFontsPattern),
+				"REGEXP",
+			),
+			option.WithMetavar(
+				option.NewStringsOption(0, "entry", "an extra entry point; may be repeated", false, &args.entries),
+				"NAME=PATH",
+			),
+			option.NewBoolOption(0, "splitting", "emit ES modules with code splitting: dynamic imports become lazy chunks with import map integrity", false, &args.splitting),
+			option.NewBoolOption(0, "skip-modulepreload", "omit the modulepreload links for the static import closure; the import map still provides integrity for every chunk", false, &args.skipModulePreload),
+			option.NewBoolOption(0, "sourcemap", "emit linked .map files alongside the js and css outputs", false, &args.sourceMaps),
+		},
+		DisableAbbrev: true,
+	}
+}
 
 func parseEntry(value string) (string, string, error) {
 	name, path, found := strings.Cut(value, "=")
 	if !found || name == "" || path == "" {
-		return "", "", fmt.Errorf("%w: %s", ErrInvalidEntryFormat, value)
+		return "", "", fmt.Errorf("%w: %w: %s", altshiftErrors.ErrValidationError, ErrInvalidEntryFormat, value)
 	}
 	return name, path, nil
+}
+
+// makeConfig validates the parsed arguments and turns them into a build configuration.
+func makeConfig(args *arguments) (*buildConfig.Config, error) {
+	extraEntries := make(map[string]string)
+	for _, entry := range args.entries {
+		name, path, err := parseEntry(entry)
+		if err != nil {
+			return nil, fmt.Errorf("parse entry: %w", err)
+		}
+		extraEntries[name] = path
+	}
+
+	var preloadFonts *regexp.Regexp
+	if args.preloadFontsPattern != "" {
+		var err error
+		preloadFonts, err = regexp.Compile(args.preloadFontsPattern)
+		if err != nil {
+			return nil, altshiftErrors.NewWithTrace(
+				fmt.Errorf("%w: regexp compile: %w", altshiftErrors.ErrParseError, err),
+				args.preloadFontsPattern,
+			)
+		}
+	}
+
+	return &buildConfig.Config{
+		SourceDirectory:   args.sourceDirectory,
+		OutputDirectory:   args.outputDirectory,
+		PublicPath:        args.publicPath,
+		PreloadFonts:      preloadFonts,
+		ExtraEntries:      extraEntries,
+		Splitting:         args.splitting,
+		SkipModulePreload: args.skipModulePreload,
+		SourceMaps:        args.sourceMaps,
+	}, nil
 }
 
 func main() {
@@ -43,65 +130,25 @@ func main() {
 	}
 	slog.SetDefault(logger.Logger)
 
-	var sourceDirectory string
-	flag.StringVar(&sourceDirectory, "source", "src", "The source directory.")
+	args := &arguments{}
+	parser := newParser(args, os.Stdout)
+	if err := parser.Validate(); err != nil {
+		logger.FatalWithExitingMessage(
+			"The argument parser is invalid.",
+			altshiftErrors.New(fmt.Errorf("parser validate: %w", err)),
+		)
+	}
+	parser.ParseOrExit()
 
-	var outputDirectory string
-	flag.StringVar(&outputDirectory, "output", "dist", "The output directory.")
-
-	var publicPath string
-	flag.StringVar(&publicPath, "public-path", "/", "The public path prefix for emitted URLs.")
-
-	var preloadFontsPattern string
-	flag.StringVar(&preloadFontsPattern, "preload-fonts", "", "A regular expression matching font assets to preload.")
-
-	var splitting bool
-	flag.BoolVar(&splitting, "splitting", false, "Emit ES modules with code splitting: dynamic imports become lazy chunks with import map integrity.")
-
-	var skipModulePreload bool
-	flag.BoolVar(&skipModulePreload, "skip-modulepreload", false, "Omit the modulepreload links for the static import closure. The import map still provides integrity for every chunk.")
-
-	var sourceMaps bool
-	flag.BoolVar(&sourceMaps, "sourcemap", false, "Emit linked .map files alongside the js and css outputs.")
-
-	extraEntries := make(map[string]string)
-	flag.Func("entry", "An extra entry point as name=path. Can be repeated.", func(value string) error {
-		name, path, err := parseEntry(value)
-		if err != nil {
-			return fmt.Errorf("parse entry: %w", err)
-		}
-		extraEntries[name] = path
-		return nil
-	})
-
-	flag.Parse()
-
-	var preloadFonts *regexp.Regexp
-	if preloadFontsPattern != "" {
-		var err error
-		preloadFonts, err = regexp.Compile(preloadFontsPattern)
-		if err != nil {
-			logger.FatalWithExitingMessage(
-				"The preload fonts pattern could not be compiled.",
-				altshiftErrors.NewWithTrace(fmt.Errorf("regexp compile: %w", err), preloadFontsPattern),
-			)
-		}
+	configuration, err := makeConfig(args)
+	if err != nil {
+		fmt.Fprint(os.Stderr, parser.FormatError(err))
+		os.Exit(exitUsage)
 	}
 
 	startTime := time.Now()
 
-	writtenPaths, err := build.Build(
-		&buildConfig.Config{
-			SourceDirectory:   sourceDirectory,
-			OutputDirectory:   outputDirectory,
-			PublicPath:        publicPath,
-			PreloadFonts:      preloadFonts,
-			ExtraEntries:      extraEntries,
-			Splitting:         splitting,
-			SkipModulePreload: skipModulePreload,
-			SourceMaps:        sourceMaps,
-		},
-	)
+	writtenPaths, err := build.Build(configuration)
 	if err != nil {
 		logger.FatalWithExitingMessage(
 			"An error occurred when building.",

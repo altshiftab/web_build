@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -14,13 +14,41 @@ import (
 	"sort"
 	"strings"
 
+	argumentParser "github.com/altshiftab/utils_go/pkg/cli/argument_parser"
+	"github.com/altshiftab/utils_go/pkg/cli/argument_parser/option"
 	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
 	altshiftLog "github.com/altshiftab/utils_go/pkg/log"
 	altshiftErrorLogger "github.com/altshiftab/utils_go/pkg/log/error_logger"
 	"github.com/evanw/esbuild/pkg/api"
 )
 
+const programName = "generate_pwa"
+
 var ErrEsbuildTransform = errors.New("esbuild transform failed")
+
+type arguments struct {
+	sourceDirectory string
+	distDirectory   string
+}
+
+func newParser(args *arguments, output io.Writer) *argumentParser.Parser {
+	return &argumentParser.Parser{
+		ProgramName: programName,
+		Description: "Copy the PWA icons into a built frontend and write its service worker from sw-template.js, with the precache list and a version that changes whenever a precached asset does.",
+		Output:      output,
+		Options: []option.Option{
+			option.WithMetavar(
+				option.WithDefault(option.NewStringOption(0, "source", "the frontend source directory", false, &args.sourceDirectory), "../frontend/src"),
+				"PATH",
+			),
+			option.WithMetavar(
+				option.WithDefault(option.NewStringOption(0, "dist", "the frontend dist directory", false, &args.distDirectory), "../frontend/dist"),
+				"PATH",
+			),
+		},
+		DisableAbbrev: true,
+	}
+}
 
 // The icons referenced from the web app manifest and <head>. They keep fixed
 // names; the service worker version accounts for content changes.
@@ -189,15 +217,17 @@ func main() {
 	}
 	slog.SetDefault(logger.Logger)
 
-	var sourceDirectory string
-	flag.StringVar(&sourceDirectory, "source", "../frontend/src", "The frontend source directory.")
+	args := &arguments{}
+	parser := newParser(args, os.Stdout)
+	if err := parser.Validate(); err != nil {
+		logger.FatalWithExitingMessage(
+			"The argument parser is invalid.",
+			altshiftErrors.New(fmt.Errorf("parser validate: %w", err)),
+		)
+	}
+	parser.ParseOrExit()
 
-	var distDirectory string
-	flag.StringVar(&distDirectory, "dist", "../frontend/dist", "The frontend dist directory.")
-
-	flag.Parse()
-
-	if err := generate(sourceDirectory, distDirectory); err != nil {
+	if err := generate(args.sourceDirectory, args.distDirectory); err != nil {
 		logger.FatalWithExitingMessage(
 			"An error occurred when generating the PWA assets.",
 			altshiftErrors.New(fmt.Errorf("generate: %w", err)),

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	argumentParserErrors "github.com/altshiftab/utils_go/pkg/cli/argument_parser/errors"
 )
 
 func writeTestFile(t *testing.T, path string, contents string) {
@@ -117,5 +121,61 @@ func TestMakePrecacheUrls(t *testing.T) {
 	expected := []string{"/icons/icon-192.png", "/", "/scripts/a.js"}
 	if !slices.Equal(actual, expected) {
 		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
+func TestParseArguments(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name          string
+		argv          []string
+		expected      arguments
+		expectedError error
+	}{
+		{
+			name:     "defaults",
+			argv:     nil,
+			expected: arguments{sourceDirectory: "../frontend/src", distDirectory: "../frontend/dist"},
+		},
+		{
+			name:     "both directories",
+			argv:     []string{"--source", "src", "--dist=dist"},
+			expected: arguments{sourceDirectory: "src", distDirectory: "dist"},
+		},
+		{
+			name:          "a single-dash long option is not accepted",
+			argv:          []string{"-source", "src"},
+			expectedError: argumentParserErrors.ErrNameNotFound,
+		},
+		{
+			name:          "an unexpected positional",
+			argv:          []string{"src"},
+			expectedError: argumentParserErrors.ErrUnexpectedArgument,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			args := &arguments{}
+			parser := newParser(args, io.Discard)
+			if err := parser.Validate(); err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			err := parser.ParseArgs(testCase.argv)
+
+			if testCase.expectedError != nil {
+				if !errors.Is(err, testCase.expectedError) {
+					t.Fatalf("expected error %v, got %v", testCase.expectedError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse args: %v", err)
+			}
+			if *args != testCase.expected {
+				t.Errorf("expected %+v, got %+v", testCase.expected, *args)
+			}
+		})
 	}
 }
