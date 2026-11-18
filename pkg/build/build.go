@@ -8,6 +8,7 @@ package build
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -25,6 +26,7 @@ import (
 	"sort"
 	"strings"
 
+	altshiftContext "github.com/altshiftab/utils_go/pkg/context"
 	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
 	"github.com/altshiftab/utils_go/pkg/errors/types/empty_error"
 	"github.com/altshiftab/utils_go/pkg/errors/types/nil_error"
@@ -158,10 +160,17 @@ func litPlugin() api.Plugin {
 
 					minified, err := lit_minifier.Minify(source)
 					if err != nil {
-						return api.OnLoadResult{}, altshiftErrors.New(
-							fmt.Errorf("lit minifier minify: %w", err),
-							args.Path,
+						// A module the scanner cannot read goes to esbuild as it is: esbuild
+						// reports a syntax error better, and a module that is valid after all
+						// only goes without its templates minified.
+						slog.WarnContext(
+							altshiftContext.WithError(
+								context.Background(),
+								altshiftErrors.New(fmt.Errorf("lit minifier minify: %w", err), args.Path),
+							),
+							"The tagged templates of a module could not be minified.",
 						)
+						minified = source
 					}
 
 					return api.OnLoadResult{

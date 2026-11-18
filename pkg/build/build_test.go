@@ -4,6 +4,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -630,5 +631,36 @@ func TestBuildValidation(t *testing.T) {
 				t.Error("expected an error")
 			}
 		})
+	}
+}
+
+func TestBuildHandsUnreadableModulesToEsbuild(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := map[string]string{
+		"src/index.html":        "<!DOCTYPE html><html><head><title>t</title></head><body></body></html>",
+		"src/scripts/index.ts":  `import {broken} from "./broken.js";` + "\nconsole.log(broken);",
+		"src/scripts/broken.js": "export const broken = `unterminated;\n",
+	}
+	for name, contents := range files {
+		fullPath := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir all: %v", err)
+		}
+		if err := os.WriteFile(fullPath, []byte(contents), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+	}
+
+	_, err := Build(&buildConfig.Config{
+		SourceDirectory: filepath.Join(root, "src"),
+		OutputDirectory: filepath.Join(root, "dist"),
+	})
+	if !errors.Is(err, ErrEsbuildBuild) {
+		t.Fatalf("expected an esbuild build error, got %v", err)
+	}
+	// The syntax error is esbuild's own, not the plugin's.
+	if !strings.Contains(err.Error(), "broken.js") || !strings.Contains(err.Error(), "Unterminated") || strings.Contains(err.Error(), "minify_lit") {
+		t.Errorf("expected esbuild to report the syntax error, got %v", err)
 	}
 }
