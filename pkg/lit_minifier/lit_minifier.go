@@ -17,11 +17,7 @@ import (
 
 const placeholder = "@TEMPLATE_EXPRESSION"
 
-var (
-	quotedSpanRegexp = regexp.MustCompile("\"[^\"]*\"|'[^']*'|`[^`]*`")
-	whitespaceRegexp = regexp.MustCompile(`\s+`)
-	newlineReplacer  = strings.NewReplacer("\n", "", "\r", "")
-)
+var whitespaceRegexp = regexp.MustCompile(`\s+`)
 
 type tag int
 
@@ -63,11 +59,12 @@ func minifyCssQuasis(quasis []string) []string {
 	return parts
 }
 
+// minifyHtmlQuasis collapses each run of whitespace to a single space, line breaks included, and
+// trims the template's ends.
 func minifyHtmlQuasis(quasis []string) []string {
 	minified := make([]string, len(quasis))
 	for i, quasi := range quasis {
-		minifiedQuasi := quotedSpanRegexp.ReplaceAllStringFunc(quasi, newlineReplacer.Replace)
-		minifiedQuasi = whitespaceRegexp.ReplaceAllString(minifiedQuasi, " ")
+		minifiedQuasi := whitespaceRegexp.ReplaceAllString(quasi, " ")
 
 		if i == 0 {
 			minifiedQuasi = strings.TrimLeftFunc(minifiedQuasi, unicode.IsSpace)

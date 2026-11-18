@@ -40,7 +40,7 @@ func TestMinify(t *testing.T) {
 			},
 		},
 		{
-			name: "removes newlines inside multi-line attribute values",
+			name: "collapses line breaks inside multi-line attribute values",
 			input: strings.Join(
 				[]string{
 					"import {html} from 'lit';",
@@ -54,7 +54,7 @@ func TestMinify(t *testing.T) {
 				},
 				"\n",
 			),
-			expectedContains: []string{`html` + "`" + `<div class="foobar"> Test </div>` + "`"},
+			expectedContains: []string{`html` + "`" + `<div class="foo bar"> Test </div>` + "`"},
 		},
 		{
 			name: "preserves code outside the templates verbatim",
@@ -100,6 +100,11 @@ func TestMinify(t *testing.T) {
 			name:          "handles division",
 			input:         "const half = total / 2; const styles = css`  .a { color: red; }  `;",
 			expectedEqual: "const half = total / 2; const styles = css`.a{color:red}`;",
+		},
+		{
+			name:          "collapses line breaks between apostrophes in text",
+			input:         "const t = html`<p>Don't\nworry, it's fine</p>`;",
+			expectedEqual: "const t = html`<p>Don't worry, it's fine</p>`;",
 		},
 		{
 			name:          "leaves a css template alone when a comment holds a substitution",
