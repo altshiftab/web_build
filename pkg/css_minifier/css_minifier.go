@@ -274,8 +274,14 @@ func minifyStatements(css string) string {
 				}
 			}
 
+			// A block left open runs to the end, where CSS closes it.
+			innerEnd := min(j, len(css))
+			if depth == 0 {
+				innerEnd = j - 1
+			}
+
 			prelude := strings.TrimSpace(current.String())
-			inner := css[i+1 : j-1]
+			inner := css[i+1 : innerEnd]
 			current.Reset()
 
 			var minifiedPrelude string

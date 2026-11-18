@@ -119,6 +119,21 @@ func TestMinify(t *testing.T) {
 			input:    ".a { background: url(data:image/png;base64,AAAA); }",
 			expected: ".a{background:url(data:image/png;base64,AAAA)}",
 		},
+		{
+			name:     "block left open",
+			input:    ".a { color: red; .b { margin: 0 ",
+			expected: ".a{color:red;.b{margin:0}}",
+		},
+		{
+			name:     "brace at the end",
+			input:    ".a {",
+			expected: ".a{}",
+		},
+		{
+			name:     "escape at the end of a block left open",
+			input:    ".a { content: \"\\",
+			expected: ".a{content:\"\\}",
+		},
 	}
 
 	for _, testCase := range testCases {
