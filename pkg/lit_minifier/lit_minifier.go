@@ -1,21 +1,18 @@
 // Package lit_minifier minifies the contents of css and html tagged template
 // literals in JavaScript source, mirroring @altshiftab/minify-lit. The source is
-// tokenized rather than fully parsed; template contents are minified and spliced
-// back, leaving all other code byte-identical.
+// scanned rather than parsed; template contents are minified and spliced back,
+// leaving all other code byte-identical.
 package lit_minifier
 
 import (
-	"errors"
+	"cmp"
 	"fmt"
-	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
-	altshiftErrors "github.com/altshiftab/utils_go/pkg/errors"
 	"github.com/altshiftab/web_build/pkg/css_minifier"
-	"github.com/tdewolff/parse/v2"
-	"github.com/tdewolff/parse/v2/js"
 )
 
 const placeholder = "@TEMPLATE_EXPRESSION"
@@ -26,71 +23,32 @@ var (
 	newlineReplacer  = strings.NewReplacer("\n", "", "\r", "")
 )
 
-type token struct {
-	tokenType js.TokenType
-	text      string
+type tag int
+
+const (
+	tagNone tag = iota
+	tagCss
+	tagHtml
+)
+
+// taggedTemplate is a css or html tagged template literal, by the spans of its quasis: the text
+// between the backticks and around the substitutions.
+type taggedTemplate struct {
+	isCss       bool
+	quasiStarts []int
+	quasiEnds   []int
 }
 
-func isInsignificant(tokenType js.TokenType) bool {
-	switch tokenType {
-	case js.WhitespaceToken, js.LineTerminatorToken, js.CommentToken, js.CommentLineTerminatorToken:
-		return true
-	default:
-		return false
-	}
+func (template *taggedTemplate) addQuasi(start int, end int) {
+	template.quasiStarts = append(template.quasiStarts, start)
+	template.quasiEnds = append(template.quasiEnds, end)
 }
 
-// allowsDivision reports whether a slash after the given token is division
-// rather than the start of a regular expression literal. A slash after a close
-// brace is treated as a regular expression (statement position), which matches
-// how real-world code uses it.
-func allowsDivision(tokenType js.TokenType) bool {
-	if js.IsIdentifier(tokenType) || js.IsNumeric(tokenType) {
-		return true
-	}
-	switch tokenType {
-	case js.ThisToken, js.TrueToken, js.FalseToken, js.NullToken,
-		js.StringToken, js.RegExpToken, js.TemplateToken, js.TemplateEndToken,
-		js.CloseParenToken, js.CloseBracketToken, js.IncrToken, js.DecrToken:
-		return true
-	default:
-		return false
-	}
-}
-
-func tokenize(source string) ([]*token, error) {
-	lexer := js.NewLexer(parse.NewInputString(source))
-
-	var tokens []*token
-	var previousSignificant js.TokenType
-
-	for {
-		tokenType, text := lexer.Next()
-		if tokenType == js.ErrorToken {
-			if err := lexer.Err(); !errors.Is(err, io.EOF) {
-				return nil, altshiftErrors.NewWithTrace(fmt.Errorf("js lexer: %w", err))
-			}
-			break
-		}
-
-		// The lexer leaves the division-or-regexp decision to its caller.
-		if (tokenType == js.DivToken || tokenType == js.DivEqToken) && !allowsDivision(previousSignificant) {
-			tokenType, text = lexer.RegExp()
-			if tokenType == js.ErrorToken {
-				if err := lexer.Err(); err != nil {
-					return nil, altshiftErrors.NewWithTrace(fmt.Errorf("js lexer regexp: %w", err))
-				}
-				break
-			}
-		}
-
-		tokens = append(tokens, &token{tokenType: tokenType, text: string(text)})
-		if !isInsignificant(tokenType) {
-			previousSignificant = tokenType
-		}
-	}
-
-	return tokens, nil
+// replacement is a span of the source and the text that replaces it.
+type replacement struct {
+	start int
+	end   int
+	text  string
 }
 
 func minifyCssQuasis(quasis []string) []string {
@@ -122,122 +80,105 @@ func minifyHtmlQuasis(quasis []string) []string {
 	return minified
 }
 
-func minifyQuasis(quasis []string, isCss bool) []string {
-	if isCss {
-		return minifyCssQuasis(quasis)
+// replacements minifies the template's quasis and returns those that changed.
+func (template *taggedTemplate) replacements(source string) []*replacement {
+	quasis := make([]string, len(template.quasiStarts))
+	for i := range quasis {
+		quasis[i] = source[template.quasiStarts[i]:template.quasiEnds[i]]
 	}
-	return minifyHtmlQuasis(quasis)
+
+	var minified []string
+	if template.isCss {
+		minified = minifyCssQuasis(quasis)
+	} else {
+		minified = minifyHtmlQuasis(quasis)
+	}
+
+	var replacements []*replacement
+	for i, quasi := range quasis {
+		if minified[i] != quasi {
+			replacements = append(replacements, &replacement{
+				start: template.quasiStarts[i],
+				end:   template.quasiEnds[i],
+				text:  minified[i],
+			})
+		}
+	}
+	return replacements
 }
 
-// processTaggedTemplate consumes the template starting at the given index,
-// writes its minified form, and returns the index of the first token after it.
-// Expression tokens are transformed recursively so nested tagged templates are
-// minified too.
-func processTaggedTemplate(tokens []*token, start int, isCss bool, output *strings.Builder) int {
-	first := tokens[start]
-
-	if first.tokenType == js.TemplateToken {
-		// The raw text is `...`.
-		quasis := minifyQuasis([]string{first.text[1 : len(first.text)-1]}, isCss)
-		output.WriteString("`" + quasis[0] + "`")
-		return start + 1
+func applyReplacements(source string, replacements []*replacement) string {
+	if len(replacements) == 0 {
+		return source
 	}
 
-	// The raw text of a template start is `...${, of a middle }...${, of an end }...`.
-	quasis := []string{first.text[1 : len(first.text)-2]}
-	var expressions [][]*token
-	var currentExpression []*token
-
-	i := start + 1
-	depth := 0
-	for i < len(tokens) {
-		currentToken := tokens[i]
-		switch currentToken.tokenType {
-		case js.TemplateStartToken:
-			depth++
-			currentExpression = append(currentExpression, currentToken)
-		case js.TemplateMiddleToken:
-			if depth == 0 {
-				quasis = append(quasis, currentToken.text[1:len(currentToken.text)-2])
-				expressions = append(expressions, currentExpression)
-				currentExpression = nil
-			} else {
-				currentExpression = append(currentExpression, currentToken)
-			}
-		case js.TemplateEndToken:
-			if depth == 0 {
-				quasis = append(quasis, currentToken.text[1:len(currentToken.text)-1])
-				expressions = append(expressions, currentExpression)
-
-				minified := minifyQuasis(quasis, isCss)
-				output.WriteString("`" + minified[0] + "${")
-				for expressionIndex, expression := range expressions {
-					transformTokens(expression, output)
-					if expressionIndex < len(expressions)-1 {
-						output.WriteString("}" + minified[expressionIndex+1] + "${")
-					}
-				}
-				output.WriteString("}" + minified[len(minified)-1] + "`")
-				return i + 1
-			}
-			depth--
-			currentExpression = append(currentExpression, currentToken)
-		default:
-			currentExpression = append(currentExpression, currentToken)
-		}
-		i++
-	}
-
-	// An unterminated template; emit the collected tokens verbatim.
-	output.WriteString(first.text)
-	for _, expressionToken := range currentExpression {
-		output.WriteString(expressionToken.text)
-	}
-	return i
-}
-
-func transformTokens(tokens []*token, output *strings.Builder) {
-	var previousSignificant js.TokenType
-
-	for i := 0; i < len(tokens); {
-		currentToken := tokens[i]
-
-		if currentToken.tokenType == js.IdentifierToken &&
-			(currentToken.text == "css" || currentToken.text == "html") &&
-			previousSignificant != js.DotToken {
-			templateIndex := i + 1
-			for templateIndex < len(tokens) && isInsignificant(tokens[templateIndex].tokenType) {
-				templateIndex++
-			}
-
-			if templateIndex < len(tokens) &&
-				(tokens[templateIndex].tokenType == js.TemplateToken ||
-					tokens[templateIndex].tokenType == js.TemplateStartToken) {
-				for _, skippedToken := range tokens[i:templateIndex] {
-					output.WriteString(skippedToken.text)
-				}
-				i = processTaggedTemplate(tokens, templateIndex, currentToken.text == "css", output)
-				previousSignificant = js.TemplateEndToken
-				continue
-			}
-		}
-
-		output.WriteString(currentToken.text)
-		if !isInsignificant(currentToken.tokenType) {
-			previousSignificant = currentToken.tokenType
-		}
-		i++
-	}
-}
-
-// Minify minifies css and html tagged template literals in the provided source.
-func Minify(source string) (string, error) {
-	tokens, err := tokenize(source)
-	if err != nil {
-		return "", fmt.Errorf("tokenize: %w", err)
-	}
+	// A template nested in another's substitution is complete before the outer one is.
+	slices.SortFunc(replacements, func(a *replacement, b *replacement) int {
+		return cmp.Compare(a.start, b.start)
+	})
 
 	var output strings.Builder
-	transformTokens(tokens, &output)
-	return output.String(), nil
+	output.Grow(len(source))
+	position := 0
+	for _, currentReplacement := range replacements {
+		output.WriteString(source[position:currentReplacement.start])
+		output.WriteString(currentReplacement.text)
+		position = currentReplacement.end
+	}
+	output.WriteString(source[position:])
+	return output.String()
+}
+
+// Minify minifies css and html tagged template literals in the provided source. A template is
+// tagged when a css or html identifier precedes it, other than as a property name; templates
+// nested in another's substitutions are minified too.
+func Minify(source string) (string, error) {
+	s := newScanner(source)
+
+	var replacements []*replacement
+	pendingTag := tagNone
+
+	for {
+		if err := s.next(); err != nil {
+			return "", fmt.Errorf("scanner next: %w", err)
+		}
+
+		switch s.kind {
+		case tokenEOF:
+			return applyReplacements(source, replacements), nil
+		case tokenTemplate:
+			if pendingTag != tagNone {
+				template := &taggedTemplate{isCss: pendingTag == tagCss}
+				template.addQuasi(s.start+len("`"), s.end-len("`"))
+				replacements = append(replacements, template.replacements(source)...)
+			}
+		case tokenTemplateHead:
+			if pendingTag != tagNone {
+				template := &taggedTemplate{isCss: pendingTag == tagCss}
+				template.addQuasi(s.start+len("`"), s.end-len("${"))
+				s.attachTemplate(template)
+			}
+		case tokenTemplateMiddle:
+			if s.template != nil {
+				s.template.addQuasi(s.start+len("}"), s.end-len("${"))
+			}
+		case tokenTemplateTail:
+			if s.template != nil {
+				s.template.addQuasi(s.start+len("}"), s.end-len("`"))
+				replacements = append(replacements, s.template.replacements(source)...)
+			}
+		default:
+			// Any other token matters only as the tag before a template, below.
+		}
+
+		pendingTag = tagNone
+		if s.kind == tokenName && !s.memberName {
+			switch source[s.start:s.end] {
+			case "css":
+				pendingTag = tagCss
+			case "html":
+				pendingTag = tagHtml
+			}
+		}
+	}
 }

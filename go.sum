@@ -2,10 +2,6 @@ github.com/altshiftab/utils_go v1.118.0 h1:K1HJ6218TTbAljzmttSIyZ69RXcCpe1Nw0n09
 github.com/altshiftab/utils_go v1.118.0/go.mod h1:lNBqVAWMIhIISNz0pOQnsqRsCPg6S50Q62GH6slGBOk=
 github.com/evanw/esbuild v0.28.2 h1:A2uETn4jrQTcXaT/shwTDTYBxDjl7fV7nXmUrJxfA2w=
 github.com/evanw/esbuild v0.28.2/go.mod h1:D2vIQZqV/vIf/VRHtViaUtViZmG7o+kKmlBfVQuRi48=
-github.com/tdewolff/parse/v2 v2.25.0 h1:a5gjBNi5lNyrtUxM3Npxqm/BsFCtJ7LwPQJkmLUDFeE=
-github.com/tdewolff/parse/v2 v2.25.0/go.mod h1:OemXEPll2+Sn7pQ6xFxC9cEm1wDnNt1hC2q3jIh+OoI=
-github.com/tdewolff/test v1.0.12 h1:7F21DqIajswxuche0geHdrUZRCWE4oko4b7bcmkkrxk=
-github.com/tdewolff/test v1.0.12/go.mod h1:XPuWBzvdUzhCuxWO1ojpXsyzsA5bFoS3tO/Q3kFuTG8=
 golang.org/x/net v0.63.0 h1:HCoTmNh9EpD1PpK8gBNFY4gcTY4N+KQEO8ylfIKqFJ0=
 golang.org/x/net v0.63.0/go.mod h1:15JLg3IX1bLjHK264EZQEbIpTiR/KVLuo9CTRWd0pig=
 golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
