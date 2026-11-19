@@ -1,7 +1,7 @@
 // Package lit_minifier minifies the contents of css and html tagged template
-// literals in JavaScript source, mirroring @altshiftab/minify-lit. The source is
-// scanned rather than parsed; template contents are minified and spliced back,
-// leaving all other code byte-identical.
+// literals in JavaScript source. The source is scanned rather than parsed;
+// template contents are minified and spliced back, leaving all other code
+// byte-identical.
 package lit_minifier
 
 import (

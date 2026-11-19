@@ -1,9 +1,9 @@
-// Package css_minifier provides a scoped CSS minifier replicating the observable
-// behavior of postcss-minify: comments are removed (except /*! ones), selectors
-// are tightened around combinators and commas, declaration values collapse
-// whitespace runs to single spaces (so calc() expressions stay intact) and are
-// tightened around commas, colons, slashes and parenthesis edges, and trailing
-// semicolons are dropped. Strings are always preserved verbatim.
+// Package css_minifier provides a scoped CSS minifier: comments are removed
+// (except /*! ones), selectors are tightened around combinators and commas,
+// declaration values collapse whitespace runs to single spaces (so calc()
+// expressions stay intact) and are tightened around commas, colons, slashes and
+// parenthesis edges, and the semicolon after a block's last declaration is
+// dropped. Strings are always preserved verbatim.
 package css_minifier
 
 import (

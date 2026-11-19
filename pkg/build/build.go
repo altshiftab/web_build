@@ -121,7 +121,7 @@ type metafile struct {
 }
 
 // litPlugin transpiles TypeScript and minifies css/html tagged templates before
-// esbuild parses each module, mirroring the esbuild-loader + minify-lit chain.
+// esbuild parses each module.
 func litPlugin() api.Plugin {
 	return api.Plugin{
 		Name: "minify_lit",
