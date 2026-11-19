@@ -120,6 +120,31 @@ func TestMinify(t *testing.T) {
 			expected: ".a{background:url(data:image/png;base64,AAAA)}",
 		},
 		{
+			name:     "selector starting with a template expression",
+			input:    "@TEMPLATE_EXPRESSION:hover { color: red } @TEMPLATE_EXPRESSION@TEMPLATE_EXPRESSION > .b { color: blue }",
+			expected: "@TEMPLATE_EXPRESSION:hover{color:red}@TEMPLATE_EXPRESSION@TEMPLATE_EXPRESSION>.b{color:blue}",
+		},
+		{
+			name:     "declaration fragment keeps its last semicolon",
+			input:    "color: red; background: blue;",
+			expected: "color:red;background:blue;",
+		},
+		{
+			name:     "declaration fragment without a last semicolon",
+			input:    "color: red; background: blue",
+			expected: "color:red;background:blue",
+		},
+		{
+			name:     "declarations in a rule lose their last semicolon",
+			input:    "color: red; .a { color: red; } .b { margin: 0; }",
+			expected: "color:red;.a{color:red}.b{margin:0}",
+		},
+		{
+			name:     "custom property with a block value",
+			input:    ".a { --x: { a: b; }; --y: 1; } .b { --z: { c: d } }",
+			expected: ".a{--x:{a:b};--y:1}.b{--z:{c:d}}",
+		},
+		{
 			name:     "block left open",
 			input:    ".a { color: red; .b { margin: 0 ",
 			expected: ".a{color:red;.b{margin:0}}",

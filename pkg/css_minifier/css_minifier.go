@@ -180,28 +180,43 @@ const (
 type statement struct {
 	kind statementKind
 	text string
+	// terminated is set for a declaration that a semicolon ended in the source.
+	terminated bool
 }
 
-// minifyStatements splits the text into top-level statements: kept comments pass
-// through, blocks recurse, and everything else is an at-rule or a declaration.
-// Declarations are joined with semicolons (none after the last); standalone
-// at-rules always keep their semicolon; blocks and comments need no separator.
-func minifyStatements(css string) string {
+// isAtRule reports whether the text starts an at-rule, as opposed to a template expression
+// placeholder standing at the start of a declaration or a selector.
+func isAtRule(text string) bool {
+	return strings.HasPrefix(text, "@") && !strings.HasPrefix(text, templateExpressionPlaceholder)
+}
+
+// minifyStatements splits the text into statements: kept comments pass through,
+// blocks recurse, and everything else is an at-rule or a declaration.
+// Declarations are joined with semicolons, with none after the last but at the
+// top level, where declarations stand only in a fragment meant to be composed
+// into a rule, and the last keeps the semicolon it had. Standalone at-rules
+// always keep their semicolon; blocks and comments need no separator, but a
+// custom property whose value is a block is a declaration like any other.
+func minifyStatements(css string, isTopLevel bool) string {
 	var statements []*statement
 	var current strings.Builder
 	var quote byte
 	parenthesisDepth := 0
 
-	flushStatement := func() {
+	flushStatement := func(terminated bool) {
 		text := strings.TrimSpace(current.String())
 		current.Reset()
 		if text == "" {
 			return
 		}
-		if strings.HasPrefix(text, "@") && !strings.HasPrefix(text, templateExpressionPlaceholder) {
+		if isAtRule(text) {
 			statements = append(statements, &statement{kind: statementKindAtRule, text: minifyAtRulePrelude(text) + ";"})
 		} else {
-			statements = append(statements, &statement{kind: statementKindDeclaration, text: minifyDeclaration(text)})
+			statements = append(statements, &statement{
+				kind:       statementKindDeclaration,
+				text:       minifyDeclaration(text),
+				terminated: terminated,
+			})
 		}
 	}
 
@@ -237,7 +252,7 @@ func minifyStatements(css string) string {
 				if end != -1 {
 					commentEnd = i + 2 + end + 2
 				}
-				flushStatement()
+				flushStatement(false)
 				statements = append(statements, &statement{kind: statementKindComment, text: css[i:commentEnd]})
 				i = commentEnd - 1
 			} else {
@@ -245,7 +260,7 @@ func minifyStatements(css string) string {
 			}
 		case ';':
 			if parenthesisDepth == 0 {
-				flushStatement()
+				flushStatement(true)
 			} else {
 				current.WriteByte(character)
 			}
@@ -285,14 +300,18 @@ func minifyStatements(css string) string {
 			current.Reset()
 
 			var minifiedPrelude string
-			if strings.HasPrefix(prelude, "@") {
+			if isAtRule(prelude) {
 				minifiedPrelude = minifyAtRulePrelude(prelude)
 			} else {
 				minifiedPrelude = minifySelector(prelude)
 			}
+			kind := statementKindBlock
+			if strings.HasPrefix(prelude, "--") {
+				kind = statementKindDeclaration
+			}
 			statements = append(statements, &statement{
-				kind: statementKindBlock,
-				text: minifiedPrelude + "{" + minifyStatements(inner) + "}",
+				kind: kind,
+				text: minifiedPrelude + "{" + minifyStatements(inner, false) + "}",
 			})
 			i = j - 1
 		default:
@@ -300,12 +319,13 @@ func minifyStatements(css string) string {
 		}
 	}
 
-	flushStatement()
+	flushStatement(false)
 
 	var output strings.Builder
 	for index, currentStatement := range statements {
 		output.WriteString(currentStatement.text)
-		if currentStatement.kind == statementKindDeclaration && index < len(statements)-1 {
+		isLast := index == len(statements)-1
+		if currentStatement.kind == statementKindDeclaration && (!isLast || isTopLevel && currentStatement.terminated) {
 			output.WriteString(";")
 		}
 	}
@@ -314,5 +334,5 @@ func minifyStatements(css string) string {
 
 // Minify minifies the provided CSS.
 func Minify(css string) string {
-	return strings.TrimSpace(minifyStatements(stripComments(css)))
+	return strings.TrimSpace(minifyStatements(stripComments(css), true))
 }

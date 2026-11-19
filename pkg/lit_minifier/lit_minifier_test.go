@@ -158,6 +158,16 @@ func TestMinify(t *testing.T) {
 			expectedEqual: "css`a$ { color: red }`",
 		},
 		{
+			name:          "minifies a selector starting with a substitution as a selector",
+			input:         "css`${sel}:hover { color: red } ${a}${b} .c { color: blue }`",
+			expectedEqual: "css`${sel}:hover{color:red}${a}${b} .c{color:blue}`",
+		},
+		{
+			name:          "keeps the last semicolon of a declaration fragment",
+			input:         "const d = css`color: red;`; x = css`.a { ${d} background: blue; }`;",
+			expectedEqual: "const d = css`color:red;`; x = css`.a{${d} background:blue}`;",
+		},
+		{
 			name:          "leaves a css template alone when a comment holds a substitution",
 			input:         "const s = css`/* ${a} */ .b { color: ${c}; }`;",
 			expectedEqual: "const s = css`/* ${a} */ .b { color: ${c}; }`;",
