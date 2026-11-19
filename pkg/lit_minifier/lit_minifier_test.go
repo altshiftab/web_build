@@ -188,6 +188,34 @@ func TestMinify(t *testing.T) {
 	}
 }
 
+func TestCollapseWhitespace(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "empty", input: "", expected: ""},
+		{name: "nothing to collapse", input: "a b c", expected: "a b c"},
+		{name: "a run of spaces", input: "a   b", expected: "a b"},
+		{name: "every kind of whitespace", input: "a \t\n\f\r b", expected: "a b"},
+		{name: "a lone line break", input: "a\nb", expected: "a b"},
+		{name: "a lone tab", input: "a\tb", expected: "a b"},
+		{name: "runs at the ends", input: "\n  a  \n", expected: " a "},
+		{name: "only whitespace", input: " \n ", expected: " "},
+		{name: "a vertical tab and a no-break space are not collapsed", input: "a\v\vb\u00a0\u00a0c", expected: "a\v\vb\u00a0\u00a0c"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if actual := collapseWhitespace(testCase.input); actual != testCase.expected {
+				t.Errorf("expected %q, got %q", testCase.expected, actual)
+			}
+		})
+	}
+}
+
 // modernSyntax are snippets of modern JavaScript, each of which a scanner that misreads it would
 // lose its place in: misreading a division as a regular expression, or a regular expression as
 // division, a brace as closing a substitution, a quote or a backtick as opening a string or a

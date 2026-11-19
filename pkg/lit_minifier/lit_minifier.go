@@ -18,7 +18,6 @@ import (
 const placeholder = "@TEMPLATE_EXPRESSION"
 
 var (
-	whitespaceRegexp = regexp.MustCompile(`\s+`)
 	// preformattedTagRegexp matches the start and end tags of the elements whose whitespace is
 	// content, and not those of custom elements whose names begin the same.
 	preformattedTagRegexp = regexp.MustCompile(`(?i)<(/?)(pre|textarea)(?:[\s/][^>]*)?>`)
@@ -64,6 +63,39 @@ func minifyQuasis(quasis []string, minify func(string) string) []string {
 	return parts
 }
 
+func isHtmlWhitespace(character byte) bool {
+	return character == ' ' || character == '\t' || character == '\n' || character == '\f' || character == '\r'
+}
+
+// collapseWhitespace replaces each run of HTML whitespace with a single space. Text with nothing to
+// collapse is returned as it is.
+func collapseWhitespace(text string) string {
+	var output strings.Builder
+	copied := 0
+	for i := 0; i < len(text); {
+		if !isHtmlWhitespace(text[i]) {
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(text) && isHtmlWhitespace(text[end]) {
+			end++
+		}
+		if end-i > 1 || text[i] != ' ' {
+			output.Grow(len(text))
+			output.WriteString(text[copied:i])
+			output.WriteByte(' ')
+			copied = end
+		}
+		i = end
+	}
+	if copied == 0 {
+		return text
+	}
+	output.WriteString(text[copied:])
+	return output.String()
+}
+
 // minifyHtml collapses each run of whitespace to a single space, line breaks included, and trims
 // the ends, except inside pre and textarea elements, where whitespace is content.
 func minifyHtml(html string) string {
@@ -76,7 +108,7 @@ func minifyHtml(html string) string {
 		name := strings.ToLower(html[match[4]:match[5]])
 		switch {
 		case openElement == "" && !isEndTag:
-			output.WriteString(whitespaceRegexp.ReplaceAllString(html[position:match[1]], " "))
+			output.WriteString(collapseWhitespace(html[position:match[1]]))
 			position = match[1]
 			openElement = name
 		case openElement == name && isEndTag:
@@ -88,7 +120,7 @@ func minifyHtml(html string) string {
 
 	rest := html[position:]
 	if openElement == "" {
-		rest = whitespaceRegexp.ReplaceAllString(rest, " ")
+		rest = collapseWhitespace(rest)
 	}
 	output.WriteString(rest)
 
