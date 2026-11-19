@@ -107,6 +107,31 @@ func TestMinify(t *testing.T) {
 			expectedEqual: "const t = html`<p>Don't worry, it's fine</p>`;",
 		},
 		{
+			name:          "keeps whitespace inside pre",
+			input:         "const t = html`\n  <div>\n    <pre>\n  a\n    b\n</pre>\n  </div>\n`;",
+			expectedEqual: "const t = html`<div> <pre>\n  a\n    b\n</pre> </div>`;",
+		},
+		{
+			name:          "keeps whitespace inside pre around substitutions",
+			input:         "const t = html`  <pre class=${c}>  ${code}\n  ${more}  </pre>  <p>  x  </p>  `;",
+			expectedEqual: "const t = html`<pre class=${c}>  ${code}\n  ${more}  </pre> <p> x </p>`;",
+		},
+		{
+			name:          "keeps whitespace inside textarea",
+			input:         "const t = html`<textarea>  a\n b</textarea>  <p>  x  </p>`;",
+			expectedEqual: "const t = html`<textarea>  a\n b</textarea> <p> x </p>`;",
+		},
+		{
+			name:          "matches pre tags in any case but not custom elements",
+			input:         "const t = html`<PRE>  a  </PRE>  <pre-view>  b  </pre-view>`;",
+			expectedEqual: "const t = html`<PRE>  a  </PRE> <pre-view> b </pre-view>`;",
+		},
+		{
+			name:          "keeps the end of a pre left open",
+			input:         "const t = html`  <pre>  a  `;",
+			expectedEqual: "const t = html`<pre>  a  `;",
+		},
+		{
 			name:          "leaves a css template alone when a comment holds a substitution",
 			input:         "const s = css`/* ${a} */ .b { color: ${c}; }`;",
 			expectedEqual: "const s = css`/* ${a} */ .b { color: ${c}; }`;",

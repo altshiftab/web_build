@@ -17,7 +17,12 @@ import (
 
 const placeholder = "@TEMPLATE_EXPRESSION"
 
-var whitespaceRegexp = regexp.MustCompile(`\s+`)
+var (
+	whitespaceRegexp = regexp.MustCompile(`\s+`)
+	// preformattedTagRegexp matches the start and end tags of the elements whose whitespace is
+	// content, and not those of custom elements whose names begin the same.
+	preformattedTagRegexp = regexp.MustCompile(`(?i)<(/?)(pre|textarea)(?:[\s/][^>]*)?>`)
+)
 
 type tag int
 
@@ -47,33 +52,49 @@ type replacement struct {
 	text  string
 }
 
-// minifyCssQuasis minifies the quasis as one stylesheet, a placeholder standing in for each
-// substitution. A substitution the minifier dropped, as it drops a comment holding one, would leave
-// every later substitution in the place of the one before it; the quasis are then left as they
-// were.
-func minifyCssQuasis(quasis []string) []string {
-	parts := strings.Split(css_minifier.Minify(strings.Join(quasis, placeholder)), placeholder)
+// minifyQuasis minifies the quasis as one text, a placeholder standing in for each substitution, so
+// that what a substitution splits, such as a rule or an element, is minified whole. A substitution
+// the minifier dropped, as the CSS minifier drops a comment holding one, would leave every later
+// substitution in the place of the one before it; the quasis are then left as they were.
+func minifyQuasis(quasis []string, minify func(string) string) []string {
+	parts := strings.Split(minify(strings.Join(quasis, placeholder)), placeholder)
 	if len(parts) != len(quasis) {
 		return quasis
 	}
 	return parts
 }
 
-// minifyHtmlQuasis collapses each run of whitespace to a single space, line breaks included, and
-// trims the template's ends.
-func minifyHtmlQuasis(quasis []string) []string {
-	minified := make([]string, len(quasis))
-	for i, quasi := range quasis {
-		minifiedQuasi := whitespaceRegexp.ReplaceAllString(quasi, " ")
+// minifyHtml collapses each run of whitespace to a single space, line breaks included, and trims
+// the ends, except inside pre and textarea elements, where whitespace is content.
+func minifyHtml(html string) string {
+	var output strings.Builder
+	position := 0
+	openElement := ""
 
-		if i == 0 {
-			minifiedQuasi = strings.TrimLeftFunc(minifiedQuasi, unicode.IsSpace)
+	for _, match := range preformattedTagRegexp.FindAllStringSubmatchIndex(html, -1) {
+		isEndTag := match[3] > match[2]
+		name := strings.ToLower(html[match[4]:match[5]])
+		switch {
+		case openElement == "" && !isEndTag:
+			output.WriteString(whitespaceRegexp.ReplaceAllString(html[position:match[1]], " "))
+			position = match[1]
+			openElement = name
+		case openElement == name && isEndTag:
+			output.WriteString(html[position:match[0]])
+			position = match[0]
+			openElement = ""
 		}
-		if i == len(quasis)-1 {
-			minifiedQuasi = strings.TrimRightFunc(minifiedQuasi, unicode.IsSpace)
-		}
+	}
 
-		minified[i] = minifiedQuasi
+	rest := html[position:]
+	if openElement == "" {
+		rest = whitespaceRegexp.ReplaceAllString(rest, " ")
+	}
+	output.WriteString(rest)
+
+	minified := strings.TrimLeftFunc(output.String(), unicode.IsSpace)
+	if openElement == "" {
+		minified = strings.TrimRightFunc(minified, unicode.IsSpace)
 	}
 	return minified
 }
@@ -85,12 +106,11 @@ func (template *taggedTemplate) replacements(source string) []*replacement {
 		quasis[i] = source[template.quasiStarts[i]:template.quasiEnds[i]]
 	}
 
-	var minified []string
+	minify := minifyHtml
 	if template.isCss {
-		minified = minifyCssQuasis(quasis)
-	} else {
-		minified = minifyHtmlQuasis(quasis)
+		minify = css_minifier.Minify
 	}
+	minified := minifyQuasis(quasis, minify)
 
 	var replacements []*replacement
 	for i, quasi := range quasis {
