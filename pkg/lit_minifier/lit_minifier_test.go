@@ -251,6 +251,9 @@ var modernSyntax = []struct {
 	{name: "division after a function expression", source: "const f = function () {} / 2; const g = class {} / 2;"},
 	{name: "division after keyword property names", source: "const n = x.default / 2 + y.new / 3 + z?.in / 4;"},
 	{name: "arrow function bodies", source: "const f = (x) => ({ a: x }) / 2; const g = () => {}\n/'/.test(s);"},
+	{name: "keywords as class field names in a substitution", source: "const t = `${ a ? class { class = 1; function = 2 } : 2 }  b  `;"},
+	{name: "regular expressions after statements ended by line breaks", source: "for (;;) { if (stop) break\n/'/.test(s) }\nx = a\n{ b }\n/`/.test(c); {} {} /\"/.test(d)"},
+	{name: "regular expression after export default class", source: "export default class {}\n/`/.test(s);"},
 	{name: "minified control flow", source: "for(let f of o.split(\"/\"))/^r\\d+$/.test(f)?a=f.slice(1):f!==\"\"&&h.push(Number(f));"},
 }
 

@@ -75,6 +75,25 @@ func TestScannerRegExps(t *testing.T) {
 		{name: "regular expression after for await parentheses", source: "for await (const x of y) /a/.test(x); await (b) / 2 / c", expected: []string{"/a/"}},
 		{name: "regular expression after an arrow", source: "x => /a/.test(x)", expected: []string{"/a/"}},
 		{
+			name:     "regular expression after jump statements and a line break",
+			source:   "for (;;) { if (a) break\n/b/.test(c); if (d) continue\n/e/.test(f); debugger\n/g/.test(h) }",
+			expected: []string{"/b/", "/e/", "/g/"},
+		},
+		{name: "division after a break label", source: "a: for (;;) { break a; } x = b / 2 / c"},
+		{
+			name:     "regular expression after consecutive blocks",
+			source:   "{} {} /a/.test(b); function f() {}\n{ }\n/c/.test(d)",
+			expected: []string{"/a/", "/c/"},
+		},
+		{name: "regular expression after a block on the line after an identifier", source: "x = a\n{ b }\n/c/.test(d)", expected: []string{"/c/"}},
+		{name: "division after a destructuring let", source: "let\n{a} = b / 2 / c"},
+		{
+			name:     "regular expression after export default declarations",
+			source:   "export default class {}\n/a/.test(s); export default function f() {}\n/b/.test(s)",
+			expected: []string{"/a/", "/b/"},
+		},
+		{name: "division after export default expressions", source: "export default {a: 1} / 2 / x; export default (function () {}) / 2 / y"},
+		{
 			name:     "regular expression after operators",
 			source:   "a = /x/; b = c || /y/; d = !/z/.test(e); f = [/w/, /v/]; g(/u/); h = i ? /t/ : /s/; j ??= /r/",
 			expected: []string{"/x/", "/y/", "/z/", "/w/", "/v/", "/u/", "/t/", "/s/", "/r/"},
@@ -167,6 +186,40 @@ func TestScannerTokens(t *testing.T) {
 			actual := scanAll(t, testCase.source, testCase.kind)
 			if !slices.Equal(actual, testCase.expected) {
 				t.Errorf("expected %q, got %q", testCase.expected, actual)
+			}
+		})
+	}
+}
+
+func TestScannerContextsBalance(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name   string
+		source string
+	}{
+		{name: "functions and classes", source: "function f() {} class A extends B { m() {} } x = function () {}; y = class {};"},
+		{name: "keywords as class field names", source: "class A { class = 1; function = 2; static class; class }"},
+		{name: "keywords as method names", source: "class A { class() {} function() {} static function*() {} }"},
+		{name: "keywords as object keys", source: "x = { class: 1, function: 2, class() {}, function() {} };"},
+		{name: "keywords as import and export names", source: "import { class as c, function as f } from \"m\"; export { c as class, f as function };"},
+		{name: "keywords as member names", source: "a.class; a?.function; a.class = function () {};"},
+		{name: "keyword field names inside a substitution", source: "`${ a ? class { class = 1 } : 2 } b`"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			s := newScanner(testCase.source)
+			for {
+				if err := s.next(); err != nil {
+					t.Fatalf("scanner next: %v", err)
+				}
+				if s.kind == tokenEOF {
+					break
+				}
+			}
+			if !slices.Equal(s.contexts, []contextKind{contextBlock}) {
+				t.Errorf("expected the contexts to close back to the top level, got %v", s.contexts)
 			}
 		})
 	}

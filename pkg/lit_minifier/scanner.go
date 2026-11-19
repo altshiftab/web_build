@@ -67,8 +67,9 @@ func (kind contextKind) isFunction() bool {
 }
 
 const (
-	keywordAwait  = "await"
-	keywordReturn = "return"
+	keywordAwait   = "await"
+	keywordDefault = "default"
+	keywordReturn  = "return"
 )
 
 // isKeywordBeforeExpression reports whether an expression may start right after the keyword, so
@@ -76,7 +77,7 @@ const (
 // in modules and in the functions where they mean something.
 func isKeywordBeforeExpression(name string) bool {
 	switch name {
-	case keywordAwait, "case", "default", "delete", "do", "else", "extends", "in", "instanceof",
+	case keywordAwait, "case", keywordDefault, "delete", "do", "else", "extends", "in", "instanceof",
 		"new", keywordReturn, "throw", "typeof", "void", "yield":
 		return true
 	default:
@@ -84,9 +85,15 @@ func isKeywordBeforeExpression(name string) bool {
 	}
 }
 
+// isJumpKeyword reports whether the keyword is a statement that a line break ends: break and
+// continue, whose label must stand on the same line, and debugger.
+func isJumpKeyword(name string) bool {
+	return name == "break" || name == "continue" || name == "debugger"
+}
+
 func isReservedWord(name string) bool {
 	switch name {
-	case "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
+	case "break", "case", "catch", "class", "const", "continue", "debugger", keywordDefault, "delete",
 		"do", "else", "enum", "export", "extends", "false", "finally", "for", "function", "if",
 		"import", "in", "instanceof", "new", "null", keywordReturn, "super", "switch", "this", "throw",
 		"true", "try", "typeof", "var", "void", "while", "with":
@@ -145,6 +152,9 @@ type scanner struct {
 	templateStarts []int
 	// exprAllowed is whether an expression may start after the current token.
 	exprAllowed bool
+	// functionPending is set when the previous token pushed a function or class context, which the
+	// current token confirms or shows to have been a property name.
+	functionPending bool
 
 	previousKind tokenKind
 	previousText string
@@ -194,6 +204,10 @@ func (s *scanner) next() error {
 	s.lineBreakBefore = false
 	if err := s.skipTrivia(); err != nil {
 		return err
+	}
+	if s.lineBreakBefore && isJumpKeyword(s.previousName) {
+		// Automatic semicolon insertion ends the statement at the line break.
+		s.exprAllowed = true
 	}
 
 	s.start = s.position
@@ -536,10 +550,20 @@ func (s *scanner) braceIsBlock() bool {
 		// Automatic semicolon insertion makes a brace on the next line a block.
 		return s.lineBreakBefore
 	case s.previousKind == tokenNone, s.previousName == "else", s.previousName == "do",
+		isJumpKeyword(s.previousName),
 		s.previousPunctuator(";"), s.previousPunctuator(")"), s.previousPunctuator("=>"):
 		return true
 	case s.previousPunctuator("{"):
 		return parent == contextBlock
+	case s.previousPunctuator("}"):
+		// After a statement, as a block is, a brace begins another; after an expression's brace,
+		// nothing valid begins with one.
+		return s.exprAllowed
+	case s.previousIsIdentifier() && s.lineBreakBefore && s.previousName != "let":
+		// No expression continues with a brace after an identifier, so automatic semicolon
+		// insertion ends the statement at the line break. After let, it is a destructuring
+		// pattern.
+		return true
 	case s.previousName == "var", s.previousName == "const", s.previousIsIdentifier():
 		return false
 	default:
@@ -578,6 +602,15 @@ func (s *scanner) closeBracket(isParenthesis bool) {
 		s.exprAllowed = false
 		return
 	}
+	// A function or class context is closed with its body, never by a bracket of its own: one
+	// still open here was a property name, and is dropped.
+	for len(s.contexts) > 1 && s.current().isFunction() {
+		s.pop()
+	}
+	if len(s.contexts) == 1 {
+		s.exprAllowed = true
+		return
+	}
 
 	closed := s.pop()
 	if closed == contextBlock && s.current().isFunction() {
@@ -590,6 +623,18 @@ func (s *scanner) closeBracket(isParenthesis bool) {
 func (s *scanner) updateContext() {
 	text := s.source[s.start:s.end]
 
+	if s.functionPending {
+		s.functionPending = false
+		// A function or class keyword is followed by its name, its parameters, a generator's
+		// star or a class body; after anything else, it was a property name, as a class field
+		// named class is, or an export named function.
+		confirmed := s.kind == tokenName ||
+			s.kind == tokenPunctuator && (text == "(" || text == "*" || text == "{")
+		if !confirmed {
+			s.pop()
+		}
+	}
+
 	switch s.kind {
 	case tokenName:
 		if s.previousPunctuator(".") || s.previousPunctuator("?.") {
@@ -600,6 +645,7 @@ func (s *scanner) updateContext() {
 		switch text {
 		case "function", "class":
 			s.push(s.functionContext())
+			s.functionPending = true
 			s.exprAllowed = false
 		case "of":
 			// After a binding, as in for (x of y), "of" is an operator; at the start of an
@@ -629,12 +675,7 @@ func (s *scanner) updateContext() {
 				s.push(contextObject)
 			}
 			s.exprAllowed = true
-		case ":":
-			// A function or class context still open at a colon was a property name.
-			if s.current().isFunction() {
-				s.pop()
-			}
-			s.exprAllowed = true
+
 		case "]", ".", "?.":
 			s.exprAllowed = false
 		case "++", "--":
@@ -655,6 +696,8 @@ func (s *scanner) updateContext() {
 		s.previousName = ""
 	case text == keywordAwait && s.previousName == "for":
 		// The parentheses of for await are a statement's head just as those of for are.
+	case text == keywordDefault && s.previousName == "export":
+		// A function or class after export default is a declaration, as after export.
 	default:
 		s.previousName = text
 	}
