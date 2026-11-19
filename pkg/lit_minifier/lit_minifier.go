@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/altshiftab/web_build/pkg/css_minifier"
 )
@@ -63,16 +62,33 @@ func minifyQuasis(quasis []string, minify func(string) string) []string {
 	return parts
 }
 
+// htmlWhitespace is the whitespace of HTML, which is also what \s matches in RE2.
+const htmlWhitespace = " \t\n\f\r"
+
 func isHtmlWhitespace(character byte) bool {
-	return character == ' ' || character == '\t' || character == '\n' || character == '\f' || character == '\r'
+	return strings.IndexByte(htmlWhitespace, character) != -1
 }
 
-// collapseWhitespace replaces each run of HTML whitespace with a single space. Text with nothing to
-// collapse is returned as it is.
+// escapeLength returns the length of the escape sequence starting with the backslash at the given
+// index: the backslash and the character it escapes, a CRLF pair being one line terminator.
+func escapeLength(text string, index int) int {
+	if strings.HasPrefix(text[index+1:], "\r\n") {
+		return 3
+	}
+	return 2
+}
+
+// collapseWhitespace replaces each run of HTML whitespace with a single space. A whitespace
+// character that a backslash escapes, as in a line continuation, belongs to the escape and is
+// left as it is. Text with nothing to collapse is returned as it is.
 func collapseWhitespace(text string) string {
 	var output strings.Builder
 	copied := 0
 	for i := 0; i < len(text); {
+		if text[i] == '\\' {
+			i += escapeLength(text, i)
+			continue
+		}
 		if !isHtmlWhitespace(text[i]) {
 			i++
 			continue
@@ -94,6 +110,45 @@ func collapseWhitespace(text string) string {
 	}
 	output.WriteString(text[copied:])
 	return output.String()
+}
+
+// endsInEscape reports whether the text ends in a backslash that escapes what would follow it.
+func endsInEscape(text string) bool {
+	backslashes := len(text) - len(strings.TrimRight(text, "\\"))
+	return backslashes%2 == 1
+}
+
+// trimHtmlWhitespace trims HTML whitespace from both ends of the text, short of a character a
+// backslash escapes.
+func trimHtmlWhitespace(text string) string {
+	trimmed := strings.TrimRight(text, htmlWhitespace)
+	if endsInEscape(trimmed) && len(trimmed) < len(text) {
+		trimmed = text[:len(trimmed)+1]
+	}
+	return strings.TrimLeft(trimmed, htmlWhitespace)
+}
+
+// isValidQuasi reports whether the text can stand between a template literal's backticks and
+// substitutions as it is: it holds no backtick and no "${" that is not escaped, and does not end
+// in a backslash, which would escape the delimiter after it. Minifying can produce one, as when
+// trimming leaves a line continuation's backslash at the end.
+func isValidQuasi(text string) bool {
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '\\':
+			if i+1 == len(text) {
+				return false
+			}
+			i++
+		case '`':
+			return false
+		case '$':
+			if i+1 < len(text) && text[i+1] == '{' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // minifyHtml collapses each run of whitespace to a single space, line breaks included, and trims
@@ -124,11 +179,11 @@ func minifyHtml(html string) string {
 	}
 	output.WriteString(rest)
 
-	minified := strings.TrimLeftFunc(output.String(), unicode.IsSpace)
-	if openElement == "" {
-		minified = strings.TrimRightFunc(minified, unicode.IsSpace)
+	if openElement != "" {
+		// The end is inside the element, whose whitespace is content.
+		return strings.TrimLeft(output.String(), htmlWhitespace)
 	}
-	return minified
+	return trimHtmlWhitespace(output.String())
 }
 
 // replacements minifies the template's quasis and returns those that changed.
@@ -143,6 +198,11 @@ func (template *taggedTemplate) replacements(source string) []*replacement {
 		minify = css_minifier.Minify
 	}
 	minified := minifyQuasis(quasis, minify)
+	for _, minifiedQuasi := range minified {
+		if !isValidQuasi(minifiedQuasi) {
+			return nil
+		}
+	}
 
 	var replacements []*replacement
 	for i, quasi := range quasis {

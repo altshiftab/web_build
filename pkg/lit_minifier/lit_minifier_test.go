@@ -2,6 +2,7 @@ package lit_minifier
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -132,6 +133,31 @@ func TestMinify(t *testing.T) {
 			expectedEqual: "const t = html`<pre>  a  `;",
 		},
 		{
+			name:          "keeps a line continuation before the closing backtick",
+			input:         "x = html`<p>  a  </p>\\\n`; y = css`.a { color: red; }\\\n`; z = 1;",
+			expectedEqual: "x = html`<p> a </p>\\\n`; y = css`.a { color: red; }\\\n`; z = 1;",
+		},
+		{
+			name:          "keeps line continuations inside html",
+			input:         "html`<p title=\"a\\\nb\">  x\\\r\n  y  </p>`",
+			expectedEqual: "html`<p title=\"a\\\nb\"> x\\\r\n y </p>`",
+		},
+		{
+			name:          "collapses whitespace after an escaped backslash",
+			input:         "html`a\\\\  \n  b`",
+			expectedEqual: "html`a\\\\ b`",
+		},
+		{
+			name:          "keeps no-break spaces at the ends of html",
+			input:         "html`\u00a0${a}\u00a0`",
+			expectedEqual: "html`\u00a0${a}\u00a0`",
+		},
+		{
+			name:          "leaves a template alone when minifying would open a substitution",
+			input:         "css`a$ { color: red }`",
+			expectedEqual: "css`a$ { color: red }`",
+		},
+		{
 			name:          "leaves a css template alone when a comment holds a substitution",
 			input:         "const s = css`/* ${a} */ .b { color: ${c}; }`;",
 			expectedEqual: "const s = css`/* ${a} */ .b { color: ${c}; }`;",
@@ -203,6 +229,11 @@ func TestCollapseWhitespace(t *testing.T) {
 		{name: "a lone tab", input: "a\tb", expected: "a b"},
 		{name: "runs at the ends", input: "\n  a  \n", expected: " a "},
 		{name: "only whitespace", input: " \n ", expected: " "},
+		{name: "a line continuation", input: "a\\\n  b", expected: "a\\\n b"},
+		{name: "a CRLF line continuation", input: "a\\\r\n  b", expected: "a\\\r\n b"},
+		{name: "an escaped space", input: "a\\   b", expected: "a\\  b"},
+		{name: "an escaped backslash", input: "a\\\\   b", expected: "a\\\\ b"},
+		{name: "a backslash at the end", input: "a  \\", expected: "a \\"},
 		{name: "a vertical tab and a no-break space are not collapsed", input: "a\v\vb\u00a0\u00a0c", expected: "a\v\vb\u00a0\u00a0c"},
 	}
 
@@ -211,6 +242,59 @@ func TestCollapseWhitespace(t *testing.T) {
 			t.Parallel()
 			if actual := collapseWhitespace(testCase.input); actual != testCase.expected {
 				t.Errorf("expected %q, got %q", testCase.expected, actual)
+			}
+		})
+	}
+}
+
+func TestTrimHtmlWhitespace(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "both ends", input: " \t\n a b \f\r ", expected: "a b"},
+		{name: "a no-break space is not trimmed", input: "\u00a0a\u00a0", expected: "\u00a0a\u00a0"},
+		{name: "a line continuation at the end", input: "a\\\n  ", expected: "a\\\n"},
+		{name: "an escaped backslash at the end", input: "a\\\\\n  ", expected: "a\\\\"},
+		{name: "only whitespace", input: " \n ", expected: ""},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if actual := trimHtmlWhitespace(testCase.input); actual != testCase.expected {
+				t.Errorf("expected %q, got %q", testCase.expected, actual)
+			}
+		})
+	}
+}
+
+func TestIsValidQuasi(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{name: "plain text", input: ".a{color:red}", expected: true},
+		{name: "empty", input: "", expected: true},
+		{name: "an escaped backtick", input: "a\\`b", expected: true},
+		{name: "an escaped substitution", input: "a\\${b}", expected: true},
+		{name: "a dollar sign at the end", input: "a$", expected: true},
+		{name: "a dollar sign before other text", input: "a$b {", expected: true},
+		{name: "a backtick", input: "a`b", expected: false},
+		{name: "a substitution", input: "a${b", expected: false},
+		{name: "a backslash at the end", input: "a\\", expected: false},
+		{name: "an escaped backslash at the end", input: "a\\\\", expected: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if actual := isValidQuasi(testCase.input); actual != testCase.expected {
+				t.Errorf("expected %v for %q, got %v", testCase.expected, testCase.input, actual)
 			}
 		})
 	}
@@ -276,8 +360,24 @@ func TestMinifyModernSyntax(t *testing.T) {
 	}
 }
 
-// FuzzMinify checks that the minifier never panics, and that it leaves source holding no css or
-// html tag byte for byte as it was.
+// tokenKinds returns the kinds of the tokens of the source, in order.
+func tokenKinds(source string) ([]tokenKind, error) {
+	s := newScanner(source)
+	var kinds []tokenKind
+	for {
+		if err := s.next(); err != nil {
+			return nil, err
+		}
+		kinds = append(kinds, s.kind)
+		if s.kind == tokenEOF {
+			return kinds, nil
+		}
+	}
+}
+
+// FuzzMinify checks that the minifier never panics, that it leaves source holding no css or html
+// tag byte for byte as it was, and that what it returns scans into the same tokens as what it was
+// given: only the text of templates may change, never the JavaScript around and between it.
 func FuzzMinify(f *testing.F) {
 	for _, testCase := range modernSyntax {
 		f.Add(testCase.source)
@@ -285,6 +385,7 @@ func FuzzMinify(f *testing.F) {
 	f.Add("html`  <p>  ${ {a: css`  .a { color: red; }  `}.a }  </p>  `")
 	f.Add("x = `a${ `b${ `c` }d` }e`")
 	f.Add("a = {} / 2; {} /a/; ({}) / 2")
+	f.Add("x = html`<p>a</p>\\\n`; y = css`a$ { color: red }`")
 
 	f.Fuzz(func(t *testing.T, source string) {
 		actual, err := Minify(source)
@@ -293,6 +394,18 @@ func FuzzMinify(f *testing.F) {
 		}
 		if !strings.Contains(source, "css") && !strings.Contains(source, "html") && actual != source {
 			t.Errorf("expected source without tags to be left alone, got %q from %q", actual, source)
+		}
+
+		expectedKinds, err := tokenKinds(source)
+		if err != nil {
+			t.Fatalf("token kinds of the source: %v", err)
+		}
+		actualKinds, err := tokenKinds(actual)
+		if err != nil {
+			t.Fatalf("token kinds of %q, minified from %q: %v", actual, source, err)
+		}
+		if !slices.Equal(actualKinds, expectedKinds) {
+			t.Errorf("expected %q, minified from %q, to scan into the same tokens", actual, source)
 		}
 	})
 }
