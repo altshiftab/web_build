@@ -94,6 +94,20 @@ func TestScannerRegExps(t *testing.T) {
 		},
 		{name: "division after export default expressions", source: "export default {a: 1} / 2 / x; export default (function () {}) / 2 / y"},
 		{
+			name:   "division after a conditional's object literal or function",
+			source: "x = c ? 0 : {a: 1} / 2 / y; z = c ? 0 : function () {} / 2 / w; v = a ?? b ? {c: 1} / 2 / d : e",
+		},
+		{name: "regular expression after a case colon that follows a conditional", source: "switch (x) { case a ? b : c: /r/.test(y); }", expected: []string{"/r/"}},
+		{name: "regular expression after a label once a nullish operator is closed", source: "x = a ?? b; l: {}\n/r/.test(y)", expected: []string{"/r/"}},
+		{name: "regular expression in a class static block", source: "class A { static { function f() {} /a/.test(x); } }", expected: []string{"/a/"}},
+		{name: "division after an async function expression", source: "f = async function () {} / 2 / x"},
+		{
+			name:     "regular expression after an async function declaration",
+			source:   "async function f() {}\n/a/.test(x); async\nfunction g() {}\n/b/.test(x)",
+			expected: []string{"/a/", "/b/"},
+		},
+		{name: "division after an awaited object literal on the next line", source: "async function f() { x = await\n{a: 1} / 2 / y }"},
+		{
 			name:     "regular expression after operators",
 			source:   "a = /x/; b = c || /y/; d = !/z/.test(e); f = [/w/, /v/]; g(/u/); h = i ? /t/ : /s/; j ??= /r/",
 			expected: []string{"/x/", "/y/", "/z/", "/w/", "/v/", "/u/", "/t/", "/s/", "/r/"},

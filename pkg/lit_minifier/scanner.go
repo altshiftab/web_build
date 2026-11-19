@@ -67,9 +67,10 @@ func (kind contextKind) isFunction() bool {
 }
 
 const (
-	keywordAwait   = "await"
-	keywordDefault = "default"
-	keywordReturn  = "return"
+	keywordAwait    = "await"
+	keywordDefault  = "default"
+	keywordFunction = "function"
+	keywordReturn   = "return"
 )
 
 // isKeywordBeforeExpression reports whether an expression may start right after the keyword, so
@@ -94,7 +95,7 @@ func isJumpKeyword(name string) bool {
 func isReservedWord(name string) bool {
 	switch name {
 	case "break", "case", "catch", "class", "const", "continue", "debugger", keywordDefault, "delete",
-		"do", "else", "enum", "export", "extends", "false", "finally", "for", "function", "if",
+		"do", "else", "enum", "export", "extends", "false", "finally", "for", keywordFunction, "if",
 		"import", "in", "instanceof", "new", "null", keywordReturn, "super", "switch", "this", "throw",
 		"true", "try", "typeof", "var", "void", "while", "with":
 		return true
@@ -146,6 +147,9 @@ type scanner struct {
 	lineBreakBefore bool
 
 	contexts []contextKind
+	// conditionals has an entry for each context: how many of the conditional operators in it
+	// still wait for their colon.
+	conditionals []int
 	// templates has an entry for each substitution context, the tagged template it is in.
 	templates []*taggedTemplate
 	// templateStarts has an entry for each substitution context, where its template begins.
@@ -155,18 +159,25 @@ type scanner struct {
 	// functionPending is set when the previous token pushed a function or class context, which the
 	// current token confirms or shows to have been a property name.
 	functionPending bool
+	// asyncFunctionContext is the context a function would have had in the place of the last
+	// async, which an async function has.
+	asyncFunctionContext contextKind
 
 	previousKind tokenKind
 	previousText string
 	// previousName is the previous token's text when it was a name and not a property name.
 	previousName string
+	// previousConditionalColon is set when the previous token was the colon of a conditional
+	// operator, and not that of a label, a case clause or a property.
+	previousConditionalColon bool
 }
 
 func newScanner(source string) *scanner {
 	return &scanner{
-		source:      source,
-		contexts:    []contextKind{contextBlock},
-		exprAllowed: true,
+		source:       source,
+		contexts:     []contextKind{contextBlock},
+		conditionals: []int{0},
+		exprAllowed:  true,
 	}
 }
 
@@ -191,12 +202,20 @@ func (s *scanner) current() contextKind {
 
 func (s *scanner) push(kind contextKind) {
 	s.contexts = append(s.contexts, kind)
+	s.conditionals = append(s.conditionals, 0)
 }
 
 func (s *scanner) pop() contextKind {
 	kind := s.current()
 	s.contexts = s.contexts[:len(s.contexts)-1]
+	s.conditionals = s.conditionals[:len(s.conditionals)-1]
 	return kind
+}
+
+// isNullishHalf reports whether the current "?" token is half of a "??" operator, which the
+// scanner takes as two.
+func (s *scanner) isNullishHalf() bool {
+	return s.start > 0 && s.source[s.start-1] == '?' || s.end < len(s.source) && s.source[s.end] == '?'
 }
 
 // next advances to the next token, which is tokenEOF at the end of the source.
@@ -542,11 +561,16 @@ func (s *scanner) braceIsBlock() bool {
 	switch {
 	case parent.isFunction():
 		return true
-	case s.previousPunctuator(":") && (parent == contextBlock || parent == contextObject):
+	case s.previousPunctuator(":") && !s.previousConditionalColon && (parent == contextBlock || parent == contextObject):
 		// A label or a case clause, or an object literal's property value.
 		return parent == contextBlock
-	case s.previousName == keywordReturn || s.previousName == "yield" || s.previousName == keywordAwait ||
-		s.previousIsIdentifier() && s.exprAllowed:
+	case s.previousName == "static":
+		// Only a class static block puts a brace right after static.
+		return true
+	case s.previousName == keywordAwait:
+		// await takes an operand, also on the next line, as return and yield do not.
+		return false
+	case s.previousName == keywordReturn || s.previousName == "yield" || s.previousIsIdentifier() && s.exprAllowed:
 		// Automatic semicolon insertion makes a brace on the next line a block.
 		return s.lineBreakBefore
 	case s.previousKind == tokenNone, s.previousName == "else", s.previousName == "do",
@@ -583,7 +607,7 @@ func (s *scanner) functionContext() contextKind {
 	case s.previousName == keywordReturn && s.lineBreakBefore:
 		// Automatic semicolon insertion ends the return statement.
 		return contextFunctionDeclaration
-	case (s.previousPunctuator(":") || s.previousPunctuator("{")) && s.current() == contextBlock:
+	case (s.previousPunctuator(":") && !s.previousConditionalColon || s.previousPunctuator("{")) && s.current() == contextBlock:
 		// After a label or a case clause, or at the start of a block.
 		return contextFunctionDeclaration
 	default:
@@ -622,6 +646,7 @@ func (s *scanner) closeBracket(isParenthesis bool) {
 // updateContext updates the contexts and whether an expression may follow, for the current token.
 func (s *scanner) updateContext() {
 	text := s.source[s.start:s.end]
+	conditionalColon := false
 
 	if s.functionPending {
 		s.functionPending = false
@@ -643,9 +668,17 @@ func (s *scanner) updateContext() {
 			break
 		}
 		switch text {
-		case "function", "class":
-			s.push(s.functionContext())
+		case keywordFunction, "class":
+			context := s.functionContext()
+			if text == keywordFunction && s.previousName == "async" && !s.lineBreakBefore {
+				// An async function stands where its async does.
+				context = s.asyncFunctionContext
+			}
+			s.push(context)
 			s.functionPending = true
+			s.exprAllowed = false
+		case "async":
+			s.asyncFunctionContext = s.functionContext()
 			s.exprAllowed = false
 		case "of":
 			// After a binding, as in for (x of y), "of" is an operator; at the start of an
@@ -680,6 +713,17 @@ func (s *scanner) updateContext() {
 			s.exprAllowed = false
 		case "++", "--":
 			// Whether prefix or postfix, they leave the question open.
+		case "?":
+			if !s.isNullishHalf() {
+				s.conditionals[len(s.conditionals)-1]++
+			}
+			s.exprAllowed = true
+		case ":":
+			if pending := &s.conditionals[len(s.conditionals)-1]; *pending > 0 {
+				*pending--
+				conditionalColon = true
+			}
+			s.exprAllowed = true
 		default:
 			s.exprAllowed = true
 		}
@@ -689,6 +733,7 @@ func (s *scanner) updateContext() {
 		s.exprAllowed = false
 	}
 
+	s.previousConditionalColon = conditionalColon
 	s.previousKind = s.kind
 	s.previousText = text
 	switch {

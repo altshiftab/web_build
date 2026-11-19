@@ -349,6 +349,15 @@ var modernSyntax = []struct {
 	{name: "regular expressions after statements ended by line breaks", source: "for (;;) { if (stop) break\n/'/.test(s) }\nx = a\n{ b }\n/`/.test(c); {} {} /\"/.test(d)"},
 	{name: "regular expression after export default class", source: "export default class {}\n/`/.test(s);"},
 	{name: "minified control flow", source: "for(let f of o.split(\"/\"))/^r\\d+$/.test(f)?a=f.slice(1):f!==\"\"&&h.push(Number(f));"},
+	{
+		name:   "regular expression after a declaration opening a static block",
+		source: "class A extends LitElement { static { function register() {}\n/[\"']/.test(navigator.userAgent) && register(); } }",
+	},
+	{
+		name:   "division after a conditional's or an async function expression",
+		source: "const x = c ? 0 : {a: 1} / 2; const y = \"'\";\nconst f = async function () {} / 2; const s = \"'\";",
+	},
+	{name: "awaited object literal on the next line", source: "async function f() { const x = await\n{ then(r) { r(4); } } / 2; const s = \"'\"; }"},
 }
 
 func TestMinifyModernSyntax(t *testing.T) {
